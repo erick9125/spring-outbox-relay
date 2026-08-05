@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
 
 permissions:
@@ -15,7 +15,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        java-version: [21, 25]
+        # Java 24 is the ceiling for Gradle 8.14.3; running it on JDK 25 fails outright, and
+        # Java 25 needs Gradle 9.1+. Adding a version here also does not widen coverage on its
+        # own: the toolchain in build.gradle.kts is pinned to 21, so every entry compiles and
+        # tests against 21 regardless. To test another Java version for real, keep Gradle on 21
+        # and parameterise the toolchain instead.
+        java-version: [21]
 
     steps:
       - uses: actions/checkout@v4

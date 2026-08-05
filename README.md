@@ -355,7 +355,7 @@ tests or operational tooling:
 
 ```java
 RelayResult result = outboxRelay.relayBatch();
-// result.claimed(), published(), rescheduled(), failed()
+// result.claimed(), published(), rescheduled(), failed(), lockLost()
 ```
 
 ---
@@ -391,6 +391,22 @@ status stays PROCESSING
 This preserves durability and can produce duplicates if Kafka already accepted the
 message. That is expected under at-least-once semantics.
 
+### Lost claim
+
+A claim is a lease, not ownership: a stalled instance can find that the row it claimed has
+already been reclaimed and taken over. The three terminal updates are therefore fenced on
+`locked_by`, so a late outcome cannot overwrite the new owner's:
+
+```text
+worker-a claims → stalls past lock-timeout
+  → recovery returns the row to PENDING
+  → worker-b claims and publishes
+  → worker-a's update matches no rows and is discarded
+```
+
+Counted in `outbox.events.lock.lost` and `RelayResult.lockLost()`. A sustained rate means
+batches are not completing within `lock-timeout`: raise it, or lower `batch-size`.
+
 More detail: [docs/failure-scenarios.md](docs/failure-scenarios.md) and
 [docs/concurrency.md](docs/concurrency.md).
 
@@ -407,6 +423,7 @@ More detail: [docs/failure-scenarios.md](docs/failure-scenarios.md) and
 | `outbox.events.published` | Successful publications |
 | `outbox.events.rescheduled` | Retryable failures |
 | `outbox.events.failed` | Permanent / exhausted failures |
+| `outbox.events.lock.lost` | Claims reclaimed by another instance mid-flight |
 | `outbox.events.recovered` | Abandoned locks recovered |
 | `outbox.publication.duration` | Publish latency |
 | `outbox.pending.count` | Current backlog |

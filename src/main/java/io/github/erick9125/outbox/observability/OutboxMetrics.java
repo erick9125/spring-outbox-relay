@@ -58,6 +58,14 @@ public final class OutboxMetrics {
     counter("outbox.events.failed", destination, eventType, "failed").increment();
   }
 
+  /**
+   * Events whose claim expired mid-flight and was taken over by another instance. A sustained
+   * non-zero rate means batches are not completing within {@code lock-timeout}.
+   */
+  public void incrementLockLost(String destination, String eventType) {
+    counter("outbox.events.lock.lost", destination, eventType, "lock-lost").increment();
+  }
+
   public void incrementRecovered(int count) {
     Counter.builder("outbox.events.recovered").register(meterRegistry).increment(count);
   }

@@ -6,6 +6,24 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- The terminal transitions (`markPublished`, `reschedule`, `markFailed`) are now fenced on the
+  current claim owner: `AND status = 'PROCESSING' AND locked_by = ?`. A claim is a lease, so a
+  stalled instance could previously overwrite the state of the instance that had taken the row
+  over after `lock-timeout` — resurrecting a published event, rescheduling a delivered one, or
+  marking a successful publication as failed. Lost claims are now reported through the new
+  `outbox.events.lock.lost` metric and `RelayResult.lockLost()`, and the row is left untouched.
+- `gradlew` is now committed with the executable bit set. Without it every Linux checkout —
+  including CI — fails with `./gradlew: Permission denied` before any task can run.
+- The CI push trigger now watches `master`, the actual default branch, instead of a `main`
+  branch that never existed, so pushes to the default branch are checked at all.
+- The CI matrix no longer claims to test Java 25. Gradle 8.14.3 cannot run on it at all (Java 24
+  is its ceiling, Java 25 needs Gradle 9.1+), and the pinned toolchain meant the entry compiled
+  and tested against Java 21 anyway.
+- `markPublished` no longer fails when the broker adapter reports no message id. `jsonb_set` is
+  strict, so a null id collapsed the `headers` column to NULL and violated its NOT NULL
+  constraint; the relay then treated the already-published event as a retryable failure and
+  republished it on every attempt until its budget ran out.
+
 - Auto-configuration is now ordered after the `DataSource`, `JdbcTemplate`, Jackson, Kafka,
   metrics and observation auto-configurations. Without that ordering its `@ConditionalOnBean`
   checks ran too early, so no broker publisher, relay or scheduler was ever registered and

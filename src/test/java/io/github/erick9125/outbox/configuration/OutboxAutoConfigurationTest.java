@@ -226,18 +226,20 @@ class OutboxAutoConfigurationTest {
     }
 
     @Override
-    public void markPublished(UUID id, Instant publishedAt, String brokerMessageId) {
-      // no-op
+    public boolean markPublished(
+        UUID id, String lockedBy, Instant publishedAt, String brokerMessageId) {
+      return true;
     }
 
     @Override
-    public void reschedule(UUID id, int attempts, Instant availableAt, String lastError) {
-      // no-op
+    public boolean reschedule(
+        UUID id, String lockedBy, int attempts, Instant availableAt, String lastError) {
+      return true;
     }
 
     @Override
-    public void markFailed(UUID id, int attempts, String lastError) {
-      // no-op
+    public boolean markFailed(UUID id, String lockedBy, int attempts, String lastError) {
+      return true;
     }
 
     @Override
