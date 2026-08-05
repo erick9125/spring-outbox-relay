@@ -1,6 +1,7 @@
 package io.github.erick9125.outbox.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.github.erick9125.outbox.api.OutboxMessage;
 import io.github.erick9125.outbox.api.OutboxStatus;
@@ -28,19 +29,17 @@ class JdbcOutboxRepositoryIntegrationTest extends AbstractPostgresIntegrationTes
   @Test
   void persistsEventWithPayloadAndHeaders() {
     UUID id =
-        fixture
-            .publisher()
-            .publish(
-                OutboxMessage.builder()
-                    .aggregateType("ORDER")
-                    .aggregateId("order-1")
-                    .eventType("order.created")
-                    .eventVersion(1)
-                    .destination("orders.events")
-                    .partitionKey("order-1")
-                    .payload(Map.of("total", 42))
-                    .header("correlation-id", "abc")
-                    .build());
+        fixture.publish(
+            OutboxMessage.builder()
+                .aggregateType("ORDER")
+                .aggregateId("order-1")
+                .eventType("order.created")
+                .eventVersion(1)
+                .destination("orders.events")
+                .partitionKey("order-1")
+                .payload(Map.of("total", 42))
+                .header("correlation-id", "abc")
+                .build());
 
     OutboxEvent event = fixture.repository().findById(id).orElseThrow();
     assertThat(event.status()).isEqualTo(OutboxStatus.PENDING);
@@ -55,17 +54,15 @@ class JdbcOutboxRepositoryIntegrationTest extends AbstractPostgresIntegrationTes
     // whole headers column to NULL, violate its NOT NULL constraint, and make the relay treat an
     // already-published event as a retryable failure — republishing it on every attempt.
     UUID id =
-        fixture
-            .publisher()
-            .publish(
-                OutboxMessage.builder()
-                    .aggregateType("ORDER")
-                    .aggregateId("order-4")
-                    .eventType("order.created")
-                    .destination("orders.events")
-                    .payload(Map.of("total", 7))
-                    .header("correlation-id", "keep-me")
-                    .build());
+        fixture.publish(
+            OutboxMessage.builder()
+                .aggregateType("ORDER")
+                .aggregateId("order-4")
+                .eventType("order.created")
+                .destination("orders.events")
+                .payload(Map.of("total", 7))
+                .header("correlation-id", "keep-me")
+                .build());
 
     fixture.repository().claimBatch(1, "worker-a");
 
@@ -79,6 +76,31 @@ class JdbcOutboxRepositoryIntegrationTest extends AbstractPostgresIntegrationTes
   }
 
   @Test
+  void refusesToPublishWithoutAnActiveTransaction() {
+    // Outside a transaction the insert would commit on its own and the atomicity guarantee the
+    // whole pattern exists for would be silently gone. Note this calls the publisher directly:
+    // Fixture.publish() opens a transaction on purpose.
+    assertThatThrownBy(
+            () ->
+                fixture
+                    .publisher()
+                    .publish(
+                        OutboxMessage.builder()
+                            .aggregateType("ORDER")
+                            .aggregateId("order-5")
+                            .eventType("order.created")
+                            .destination("orders.events")
+                            .payload(Map.of("ok", true))
+                            .build()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("requires an active transaction")
+        .hasMessageContaining("order.created")
+        .hasMessageContaining("ORDER/order-5");
+
+    assertThat(fixture.repository().countPending()).isZero();
+  }
+
+  @Test
   void rollsBackOutboxWithBusinessTransaction() {
     AtomicReference<UUID> id = new AtomicReference<>();
 
@@ -88,16 +110,14 @@ class JdbcOutboxRepositoryIntegrationTest extends AbstractPostgresIntegrationTes
           .executeWithoutResult(
               status -> {
                 id.set(
-                    fixture
-                        .publisher()
-                        .publish(
-                            OutboxMessage.builder()
-                                .aggregateType("ORDER")
-                                .aggregateId("order-2")
-                                .eventType("order.created")
-                                .destination("orders.events")
-                                .payload(Map.of("ok", true))
-                                .build()));
+                    fixture.publish(
+                        OutboxMessage.builder()
+                            .aggregateType("ORDER")
+                            .aggregateId("order-2")
+                            .eventType("order.created")
+                            .destination("orders.events")
+                            .payload(Map.of("ok", true))
+                            .build()));
                 throw new IllegalStateException("business failure");
               });
     } catch (IllegalStateException ignored) {
@@ -115,16 +135,14 @@ class JdbcOutboxRepositoryIntegrationTest extends AbstractPostgresIntegrationTes
             .transactionTemplate()
             .execute(
                 status ->
-                    fixture
-                        .publisher()
-                        .publish(
-                            OutboxMessage.builder()
-                                .aggregateType("ORDER")
-                                .aggregateId("order-3")
-                                .eventType("order.created")
-                                .destination("orders.events")
-                                .payload(Map.of("ok", true))
-                                .build()));
+                    fixture.publish(
+                        OutboxMessage.builder()
+                            .aggregateType("ORDER")
+                            .aggregateId("order-3")
+                            .eventType("order.created")
+                            .destination("orders.events")
+                            .payload(Map.of("ok", true))
+                            .build()));
 
     assertThat(fixture.repository().findById(id)).isPresent();
   }

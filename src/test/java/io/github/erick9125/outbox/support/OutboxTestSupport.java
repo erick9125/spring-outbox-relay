@@ -3,6 +3,7 @@ package io.github.erick9125.outbox.support;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import io.github.erick9125.outbox.api.DefaultOutboxPublisher;
+import io.github.erick9125.outbox.api.OutboxMessage;
 import io.github.erick9125.outbox.api.OutboxPublisher;
 import io.github.erick9125.outbox.broker.MessageBrokerPublisher;
 import io.github.erick9125.outbox.configuration.OutboxProperties;
@@ -17,6 +18,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.micrometer.observation.ObservationRegistry;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.UUID;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -115,5 +117,14 @@ public final class OutboxTestSupport {
       OutboxProperties properties,
       OutboxRepository repository,
       OutboxPublisher publisher,
-      OutboxMetrics metrics) {}
+      OutboxMetrics metrics) {
+
+    /**
+     * Publishes inside a transaction, which is what {@code OutboxPublisher} requires. Propagation
+     * is REQUIRED, so this joins an enclosing transaction when a test already opened one.
+     */
+    public UUID publish(OutboxMessage message) {
+      return transactionTemplate.execute(status -> publisher.publish(message));
+    }
+  }
 }

@@ -296,6 +296,11 @@ public class OrderService {
 If the order insert fails, the outbox insert rolls back with it.
 If the outbox insert fails, the order rolls back with it.
 
+`publish()` requires an active transaction and throws `IllegalStateException` when there is
+none. That is deliberate: called outside a transaction the outbox row would commit on its own,
+the atomicity this library exists for would be gone, and nothing would say so — the symptom
+would surface much later as drift between the database and the broker.
+
 ### 2. Message contract
 
 ```java
@@ -326,6 +331,11 @@ Each published record includes:
 | `event-version` | Contract version |
 | `aggregate-type` | Aggregate family |
 | `aggregate-id` | Aggregate identity |
+
+Any headers you attach with `.header(...)` or `.headers(...)` are delivered alongside these.
+The five names above are reserved for relay metadata: a header of the same name is dropped
+with a warning rather than delivered as a second value, so consumers deduplicating on
+`event-id` can trust what they read.
 
 ### 4. Consumer guidance
 

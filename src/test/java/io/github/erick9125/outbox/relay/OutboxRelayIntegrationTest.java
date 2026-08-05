@@ -41,16 +41,14 @@ class OutboxRelayIntegrationTest extends AbstractPostgresIntegrationTest {
     IntStream.range(0, 5)
         .forEach(
             i ->
-                fixture
-                    .publisher()
-                    .publish(
-                        OutboxMessage.builder()
-                            .aggregateType("ORDER")
-                            .aggregateId("order-" + i)
-                            .eventType("order.created")
-                            .destination("orders.events")
-                            .payload(Map.of("i", i))
-                            .build()));
+                fixture.publish(
+                    OutboxMessage.builder()
+                        .aggregateType("ORDER")
+                        .aggregateId("order-" + i)
+                        .eventType("order.created")
+                        .destination("orders.events")
+                        .payload(Map.of("i", i))
+                        .build()));
 
     List<OutboxEvent> claimed = fixture.repository().claimBatch(2, "worker-a");
     assertThat(claimed).hasSize(2);
@@ -63,17 +61,15 @@ class OutboxRelayIntegrationTest extends AbstractPostgresIntegrationTest {
     IntStream.range(0, 30)
         .forEach(
             i ->
-                fixture
-                    .publisher()
-                    .publish(
-                        OutboxMessage.builder()
-                            .aggregateType("ORDER")
-                            .aggregateId("order-" + i)
-                            .eventType("order.created")
-                            .destination("orders.events")
-                            .partitionKey("order-" + i)
-                            .payload(Map.of("i", i))
-                            .build()));
+                fixture.publish(
+                    OutboxMessage.builder()
+                        .aggregateType("ORDER")
+                        .aggregateId("order-" + i)
+                        .eventType("order.created")
+                        .destination("orders.events")
+                        .partitionKey("order-" + i)
+                        .payload(Map.of("i", i))
+                        .build()));
 
     Set<UUID> claimedIds = ConcurrentHashMap.newKeySet();
     List<UUID> duplicates = new CopyOnWriteArrayList<>();
@@ -112,17 +108,15 @@ class OutboxRelayIntegrationTest extends AbstractPostgresIntegrationTest {
   @Test
   void publishesAndMarksPublished() {
     UUID id =
-        fixture
-            .publisher()
-            .publish(
-                OutboxMessage.builder()
-                    .aggregateType("ORDER")
-                    .aggregateId("order-9")
-                    .eventType("order.created")
-                    .destination("orders.events")
-                    .partitionKey("order-9")
-                    .payload(Map.of("total", 10))
-                    .build());
+        fixture.publish(
+            OutboxMessage.builder()
+                .aggregateType("ORDER")
+                .aggregateId("order-9")
+                .eventType("order.created")
+                .destination("orders.events")
+                .partitionKey("order-9")
+                .payload(Map.of("total", 10))
+                .build());
 
     List<OutboxEvent> publishedEvents = new CopyOnWriteArrayList<>();
     OutboxRelay relay =
@@ -144,29 +138,25 @@ class OutboxRelayIntegrationTest extends AbstractPostgresIntegrationTest {
   @Test
   void reschedulesRetryableFailuresAndFailsPermanentOnes() {
     UUID retryableId =
-        fixture
-            .publisher()
-            .publish(
-                OutboxMessage.builder()
-                    .aggregateType("ORDER")
-                    .aggregateId("retryable")
-                    .eventType("order.created")
-                    .destination("orders.events")
-                    .payload(Map.of("type", "retryable"))
-                    .maxAttempts(3)
-                    .build());
+        fixture.publish(
+            OutboxMessage.builder()
+                .aggregateType("ORDER")
+                .aggregateId("retryable")
+                .eventType("order.created")
+                .destination("orders.events")
+                .payload(Map.of("type", "retryable"))
+                .maxAttempts(3)
+                .build());
     UUID permanentId =
-        fixture
-            .publisher()
-            .publish(
-                OutboxMessage.builder()
-                    .aggregateType("ORDER")
-                    .aggregateId("permanent")
-                    .eventType("order.created")
-                    .destination("orders.events")
-                    .payload(Map.of("type", "permanent"))
-                    .maxAttempts(3)
-                    .build());
+        fixture.publish(
+            OutboxMessage.builder()
+                .aggregateType("ORDER")
+                .aggregateId("permanent")
+                .eventType("order.created")
+                .destination("orders.events")
+                .payload(Map.of("type", "permanent"))
+                .maxAttempts(3)
+                .build());
 
     OutboxRelay relay =
         OutboxTestSupport.relay(
@@ -195,38 +185,32 @@ class OutboxRelayIntegrationTest extends AbstractPostgresIntegrationTest {
   @Test
   void doesNotClaimFailedOrPublishedEvents() {
     UUID pending =
-        fixture
-            .publisher()
-            .publish(
-                OutboxMessage.builder()
-                    .aggregateType("ORDER")
-                    .aggregateId("pending")
-                    .eventType("order.created")
-                    .destination("orders.events")
-                    .payload(Map.of("s", "pending"))
-                    .build());
+        fixture.publish(
+            OutboxMessage.builder()
+                .aggregateType("ORDER")
+                .aggregateId("pending")
+                .eventType("order.created")
+                .destination("orders.events")
+                .payload(Map.of("s", "pending"))
+                .build());
     UUID published =
-        fixture
-            .publisher()
-            .publish(
-                OutboxMessage.builder()
-                    .aggregateType("ORDER")
-                    .aggregateId("published")
-                    .eventType("order.created")
-                    .destination("orders.events")
-                    .payload(Map.of("s", "published"))
-                    .build());
+        fixture.publish(
+            OutboxMessage.builder()
+                .aggregateType("ORDER")
+                .aggregateId("published")
+                .eventType("order.created")
+                .destination("orders.events")
+                .payload(Map.of("s", "published"))
+                .build());
     UUID failed =
-        fixture
-            .publisher()
-            .publish(
-                OutboxMessage.builder()
-                    .aggregateType("ORDER")
-                    .aggregateId("failed")
-                    .eventType("order.created")
-                    .destination("orders.events")
-                    .payload(Map.of("s", "failed"))
-                    .build());
+        fixture.publish(
+            OutboxMessage.builder()
+                .aggregateType("ORDER")
+                .aggregateId("failed")
+                .eventType("order.created")
+                .destination("orders.events")
+                .payload(Map.of("s", "failed"))
+                .build());
 
     // The terminal transitions are fenced on the current owner, so the rows have to be claimed
     // before they can be moved out of PENDING.
@@ -249,16 +233,14 @@ class OutboxRelayIntegrationTest extends AbstractPostgresIntegrationTest {
   @Test
   void leavesTheRowAloneWhenTheClaimWasLostBeforeItCouldBeSettled() {
     UUID id =
-        fixture
-            .publisher()
-            .publish(
-                OutboxMessage.builder()
-                    .aggregateType("ORDER")
-                    .aggregateId("stolen")
-                    .eventType("order.created")
-                    .destination("orders.events")
-                    .payload(Map.of("s", "stolen"))
-                    .build());
+        fixture.publish(
+            OutboxMessage.builder()
+                .aggregateType("ORDER")
+                .aggregateId("stolen")
+                .eventType("order.created")
+                .destination("orders.events")
+                .payload(Map.of("s", "stolen"))
+                .build());
 
     // worker-a claims the event, then stalls long enough for recovery to reclaim it.
     List<OutboxEvent> claimedByA = fixture.repository().claimBatch(1, "worker-a");
@@ -291,16 +273,14 @@ class OutboxRelayIntegrationTest extends AbstractPostgresIntegrationTest {
 
   @Test
   void reportsLockLossInsteadOfRepublishingWhenTheClaimIsGone() {
-    fixture
-        .publisher()
-        .publish(
-            OutboxMessage.builder()
-                .aggregateType("ORDER")
-                .aggregateId("hijacked")
-                .eventType("order.created")
-                .destination("orders.events")
-                .payload(Map.of("s", "hijacked"))
-                .build());
+    fixture.publish(
+        OutboxMessage.builder()
+            .aggregateType("ORDER")
+            .aggregateId("hijacked")
+            .eventType("order.created")
+            .destination("orders.events")
+            .payload(Map.of("s", "hijacked"))
+            .build());
 
     // The claim is taken away between the claim and the publication, which is what a stalled
     // instance experiences after lock-timeout elapses.
