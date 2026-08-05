@@ -34,14 +34,29 @@ public final class DefaultOutboxRecoveryService implements OutboxRecoveryService
     this.clock = Objects.requireNonNull(clock);
   }
 
+  /**
+   * Drains abandoned claims in bounded batches.
+   *
+   * <p>Each statement is capped at {@code maintenance-batch-size} so a large backlog cannot become
+   * one long-running UPDATE that holds locks across the whole set. The loop keeps going until a
+   * batch comes back short, which means the backlog is drained.
+   */
   @Override
   public int recoverAbandonedEvents() {
     Instant lockedBefore = clock.instant().minus(properties.lockTimeout());
-    int recovered = repository.recoverAbandoned(lockedBefore);
-    if (recovered > 0) {
-      metrics.incrementRecovered(recovered);
-      log.info("Recovered {} abandoned outbox events locked before {}", recovered, lockedBefore);
+    int batchSize = properties.maintenanceBatchSize();
+    int total = 0;
+
+    int recovered;
+    do {
+      recovered = repository.recoverAbandoned(lockedBefore, batchSize);
+      total += recovered;
+    } while (recovered == batchSize);
+
+    if (total > 0) {
+      metrics.incrementRecovered(total);
+      log.info("Recovered {} abandoned outbox events locked before {}", total, lockedBefore);
     }
-    return recovered;
+    return total;
   }
 }

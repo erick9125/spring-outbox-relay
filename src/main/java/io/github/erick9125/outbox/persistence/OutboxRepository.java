@@ -42,9 +42,23 @@ public interface OutboxRepository {
    */
   boolean markFailed(UUID id, String lockedBy, int attempts, String lastError);
 
-  int recoverAbandoned(Instant lockedBefore);
+  /**
+   * Returns at most {@code limit} rows whose claim expired back to {@code PENDING}.
+   *
+   * <p>Bounded on purpose. After a long outage the backlog of abandoned claims can be enormous, and
+   * a single unbounded UPDATE would hold locks over the whole set, bloat the table and compete with
+   * the relay for the same rows. Callers drain in batches instead.
+   *
+   * @return how many rows were recovered; fewer than {@code limit} means the backlog is drained
+   */
+  int recoverAbandoned(Instant lockedBefore, int limit);
 
-  int deletePublishedBefore(Instant publishedBefore);
+  /**
+   * Deletes at most {@code limit} published rows older than {@code publishedBefore}.
+   *
+   * @return how many rows were deleted; fewer than {@code limit} means nothing is left to delete
+   */
+  int deletePublishedBefore(Instant publishedBefore, int limit);
 
   long countPending();
 

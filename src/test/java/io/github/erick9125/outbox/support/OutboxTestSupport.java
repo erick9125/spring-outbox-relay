@@ -60,6 +60,7 @@ public final class OutboxTestSupport {
         maxAttempts,
         "test-instance",
         Duration.ofSeconds(30),
+        500,
         new OutboxProperties.Retry(Duration.ofSeconds(5), Duration.ofMinutes(5), 2.0d, 0.0d),
         OutboxProperties.Cleanup.defaults());
   }
@@ -98,6 +99,7 @@ public final class OutboxTestSupport {
             fixture.properties().defaultMaxAttempts(),
             instanceId,
             fixture.properties().recoveryInterval(),
+            fixture.properties().maintenanceBatchSize(),
             fixture.properties().retry(),
             fixture.properties().cleanup());
     return new DefaultOutboxRelay(

@@ -9,6 +9,8 @@ import io.github.erick9125.outbox.domain.OutboxEvent;
 import io.github.erick9125.outbox.support.AbstractPostgresIntegrationTest;
 import io.github.erick9125.outbox.support.OutboxTestSupport;
 import io.github.erick9125.outbox.support.OutboxTestSupport.Fixture;
+import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
@@ -73,6 +75,40 @@ class JdbcOutboxRepositoryIntegrationTest extends AbstractPostgresIntegrationTes
     assertThat(event.headers()).isNotNull();
     assertThat(event.headers()).contains("correlation-id").contains("keep-me");
     assertThat(event.publishedAt()).isNotNull();
+  }
+
+  @Test
+  void boundsRecoveryAndCleanupToTheRequestedLimit() {
+    // The limit is what keeps a huge backlog from becoming one long-running statement holding locks
+    // over the whole set. Asserting on the drain loop's total would not catch its absence, so this
+    // checks a single call returns no more rows than it was asked for.
+    for (int i = 0; i < 5; i++) {
+      fixture.publish(message("abandoned-" + i));
+    }
+    fixture.repository().claimBatch(10, "dead-worker");
+    fixture
+        .jdbcTemplate()
+        .update(
+            "UPDATE outbox_event SET locked_at = ?",
+            Timestamp.from(Instant.now().minus(Duration.ofMinutes(10))));
+
+    Instant lockedBefore = Instant.now().minus(Duration.ofMinutes(1));
+    assertThat(fixture.repository().recoverAbandoned(lockedBefore, 2)).isEqualTo(2);
+    assertThat(fixture.repository().recoverAbandoned(lockedBefore, 2)).isEqualTo(2);
+    assertThat(fixture.repository().recoverAbandoned(lockedBefore, 2)).isEqualTo(1);
+    assertThat(fixture.repository().recoverAbandoned(lockedBefore, 2)).isZero();
+
+    fixture.repository().claimBatch(10, "worker-a");
+    fixture
+        .jdbcTemplate()
+        .update(
+            "UPDATE outbox_event SET status = 'PUBLISHED', published_at = ?, locked_by = NULL",
+            Timestamp.from(Instant.now().minus(Duration.ofDays(30))));
+
+    Instant publishedBefore = Instant.now().minus(Duration.ofDays(1));
+    assertThat(fixture.repository().deletePublishedBefore(publishedBefore, 3)).isEqualTo(3);
+    assertThat(fixture.repository().deletePublishedBefore(publishedBefore, 3)).isEqualTo(2);
+    assertThat(fixture.repository().deletePublishedBefore(publishedBefore, 3)).isZero();
   }
 
   @Test
@@ -145,5 +181,15 @@ class JdbcOutboxRepositoryIntegrationTest extends AbstractPostgresIntegrationTes
                             .build()));
 
     assertThat(fixture.repository().findById(id)).isPresent();
+  }
+
+  private static OutboxMessage message(String aggregateId) {
+    return OutboxMessage.builder()
+        .aggregateType("ORDER")
+        .aggregateId(aggregateId)
+        .eventType("order.created")
+        .destination("orders.events")
+        .payload(Map.of("ok", true))
+        .build();
   }
 }

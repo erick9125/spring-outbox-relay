@@ -245,7 +245,7 @@ class OutboxRelayIntegrationTest extends AbstractPostgresIntegrationTest {
     // worker-a claims the event, then stalls long enough for recovery to reclaim it.
     List<OutboxEvent> claimedByA = fixture.repository().claimBatch(1, "worker-a");
     assertThat(claimedByA).hasSize(1);
-    fixture.repository().recoverAbandoned(Instant.now().plus(Duration.ofMinutes(1)));
+    fixture.repository().recoverAbandoned(Instant.now().plus(Duration.ofMinutes(1)), 100);
 
     // worker-b now owns the row and publishes it.
     OutboxRelay workerB =
@@ -288,7 +288,7 @@ class OutboxRelayIntegrationTest extends AbstractPostgresIntegrationTest {
         OutboxTestSupport.relay(
             fixture,
             event -> {
-              fixture.repository().recoverAbandoned(Instant.now().plus(Duration.ofMinutes(1)));
+              fixture.repository().recoverAbandoned(Instant.now().plus(Duration.ofMinutes(1)), 100);
               fixture.repository().claimBatch(1, "worker-b");
               return new PublicationResult("broker-a", Instant.now());
             },

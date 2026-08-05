@@ -13,6 +13,7 @@ public record OutboxProperties(
     @DefaultValue("5") int defaultMaxAttempts,
     String instanceId,
     @DefaultValue("1m") Duration recoveryInterval,
+    @DefaultValue("500") int maintenanceBatchSize,
     @DefaultValue Retry retry,
     @DefaultValue Cleanup cleanup) {
 
@@ -22,6 +23,9 @@ public record OutboxProperties(
     }
     if (defaultMaxAttempts < 1) {
       defaultMaxAttempts = 5;
+    }
+    if (maintenanceBatchSize < 1) {
+      maintenanceBatchSize = 500;
     }
     if (retry == null) {
       retry = Retry.defaults();
@@ -40,6 +44,7 @@ public record OutboxProperties(
         5,
         null,
         Duration.ofMinutes(1),
+        500,
         Retry.defaults(),
         Cleanup.defaults());
   }

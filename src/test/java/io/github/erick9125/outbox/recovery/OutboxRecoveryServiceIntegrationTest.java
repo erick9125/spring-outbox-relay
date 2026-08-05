@@ -61,6 +61,7 @@ class OutboxRecoveryServiceIntegrationTest extends AbstractPostgresIntegrationTe
             5,
             "recovery",
             Duration.ofMinutes(1),
+            500,
             OutboxProperties.Retry.defaults(),
             OutboxProperties.Cleanup.defaults());
     OutboxRecoveryService recovery =
@@ -77,6 +78,55 @@ class OutboxRecoveryServiceIntegrationTest extends AbstractPostgresIntegrationTe
     assertThat(event.lockedBy()).isNull();
     assertThat(event.lockedAt()).isNull();
     assertThat(event.attempts()).isEqualTo(2);
+  }
+
+  @Test
+  void recoversTheWholeBacklogAcrossSeveralBatches() {
+    // maintenance-batch-size is 2, so 5 abandoned claims need three statements. Before batching
+    // this was one unbounded UPDATE holding locks over the entire backlog.
+    java.util.stream.IntStream.range(0, 5)
+        .forEach(
+            i ->
+                fixture.publish(
+                    OutboxMessage.builder()
+                        .aggregateType("ORDER")
+                        .aggregateId("abandoned-" + i)
+                        .eventType("order.created")
+                        .destination("orders.events")
+                        .payload(Map.of("i", i))
+                        .build()));
+
+    fixture.repository().claimBatch(10, "dead-worker");
+    fixture
+        .jdbcTemplate()
+        .update(
+            "UPDATE outbox_event SET locked_at = ?",
+            java.sql.Timestamp.from(Instant.now().minus(Duration.ofMinutes(10))));
+
+    OutboxProperties properties =
+        new OutboxProperties(
+            true,
+            50,
+            Duration.ofSeconds(1),
+            Duration.ofMinutes(5),
+            5,
+            "recovery",
+            Duration.ofMinutes(1),
+            2,
+            OutboxProperties.Retry.defaults(),
+            OutboxProperties.Cleanup.defaults());
+
+    OutboxRecoveryService recovery =
+        new DefaultOutboxRecoveryService(
+            fixture.repository(),
+            properties,
+            new OutboxMetrics(new SimpleMeterRegistry(), fixture.repository()));
+
+    assertThat(recovery.recoverAbandonedEvents()).isEqualTo(5);
+    assertThat(fixture.repository().countPending()).isEqualTo(5);
+
+    // Backlog drained: the loop must stop rather than spin.
+    assertThat(recovery.recoverAbandonedEvents()).isZero();
   }
 
   @Test
