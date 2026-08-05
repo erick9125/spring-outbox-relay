@@ -139,9 +139,15 @@ public final class JdbcOutboxRepository implements OutboxRepository {
   }
 
   @Override
-  public void markPublished(UUID id, Instant publishedAt, String brokerMessageId) {
-    jdbcTemplate.update(
-        """
+  public boolean markPublished(
+      UUID id, String lockedBy, Instant publishedAt, String brokerMessageId) {
+    // jsonb_set is strict: a NULL new_value collapses the whole expression to NULL, and headers is
+    // NOT NULL. Without the COALESCE, a broker adapter that reports no message id would fail this
+    // update, the relay would treat the failure as retryable, and an already-published event would
+    // be sent again on every attempt until its budget ran out.
+    int updated =
+        jdbcTemplate.update(
+            """
                 UPDATE outbox_event
                 SET status = ?,
                     published_at = ?,
@@ -151,21 +157,28 @@ public final class JdbcOutboxRepository implements OutboxRepository {
                     headers = jsonb_set(
                         COALESCE(headers, '{}'::jsonb),
                         '{brokerMessageId}',
-                        to_jsonb(?::text),
+                        COALESCE(to_jsonb(?::text), 'null'::jsonb),
                         true
                     )
                 WHERE id = ?
+                  AND status = ?
+                  AND locked_by = ?
                 """,
-        OutboxStatus.PUBLISHED.name(),
-        Timestamp.from(publishedAt),
-        brokerMessageId,
-        id);
+            OutboxStatus.PUBLISHED.name(),
+            Timestamp.from(publishedAt),
+            brokerMessageId,
+            id,
+            OutboxStatus.PROCESSING.name(),
+            lockedBy);
+    return updated > 0;
   }
 
   @Override
-  public void reschedule(UUID id, int attempts, Instant availableAt, String lastError) {
-    jdbcTemplate.update(
-        """
+  public boolean reschedule(
+      UUID id, String lockedBy, int attempts, Instant availableAt, String lastError) {
+    int updated =
+        jdbcTemplate.update(
+            """
                 UPDATE outbox_event
                 SET status = ?,
                     attempts = ?,
@@ -174,18 +187,24 @@ public final class JdbcOutboxRepository implements OutboxRepository {
                     locked_by = NULL,
                     last_error = ?
                 WHERE id = ?
+                  AND status = ?
+                  AND locked_by = ?
                 """,
-        OutboxStatus.PENDING.name(),
-        attempts,
-        Timestamp.from(availableAt),
-        truncate(lastError),
-        id);
+            OutboxStatus.PENDING.name(),
+            attempts,
+            Timestamp.from(availableAt),
+            truncate(lastError),
+            id,
+            OutboxStatus.PROCESSING.name(),
+            lockedBy);
+    return updated > 0;
   }
 
   @Override
-  public void markFailed(UUID id, int attempts, String lastError) {
-    jdbcTemplate.update(
-        """
+  public boolean markFailed(UUID id, String lockedBy, int attempts, String lastError) {
+    int updated =
+        jdbcTemplate.update(
+            """
                 UPDATE outbox_event
                 SET status = ?,
                     attempts = ?,
@@ -193,11 +212,16 @@ public final class JdbcOutboxRepository implements OutboxRepository {
                     locked_by = NULL,
                     last_error = ?
                 WHERE id = ?
+                  AND status = ?
+                  AND locked_by = ?
                 """,
-        OutboxStatus.FAILED.name(),
-        attempts,
-        truncate(lastError),
-        id);
+            OutboxStatus.FAILED.name(),
+            attempts,
+            truncate(lastError),
+            id,
+            OutboxStatus.PROCESSING.name(),
+            lockedBy);
+    return updated > 0;
   }
 
   @Override

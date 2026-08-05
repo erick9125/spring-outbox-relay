@@ -357,7 +357,7 @@ pruebas o herramientas operativas:
 
 ```java
 RelayResult result = outboxRelay.relayBatch();
-// result.claimed(), published(), rescheduled(), failed()
+// result.claimed(), published(), rescheduled(), failed(), lockLost()
 ```
 
 ---
@@ -393,6 +393,23 @@ el estado permanece PROCESSING
 Esto preserva la durabilidad y puede producir duplicados si Kafka ya había aceptado el
 mensaje. Es el comportamiento esperado bajo semántica at-least-once.
 
+### Claim perdido
+
+Un claim es un arriendo, no una propiedad: una instancia detenida puede descubrir que la fila
+que reclamó ya fue recuperada y tomada por otra. Por eso las tres transiciones terminales
+están protegidas por `locked_by`, de modo que un resultado tardío no pueda sobrescribir el de
+la nueva dueña:
+
+```text
+worker-a reclama → se detiene más allá del lock-timeout
+  → la recuperación devuelve la fila a PENDING
+  → worker-b la reclama y la publica
+  → el update de worker-a no coincide con ninguna fila y se descarta
+```
+
+Se cuenta en `outbox.events.lock.lost` y en `RelayResult.lockLost()`. Una tasa sostenida
+significa que los lotes no terminan dentro de `lock-timeout`: súbelo, o baja `batch-size`.
+
 Más detalle en [docs/failure-scenarios.md](docs/failure-scenarios.md) y
 [docs/concurrency.md](docs/concurrency.md).
 
@@ -409,6 +426,7 @@ Más detalle en [docs/failure-scenarios.md](docs/failure-scenarios.md) y
 | `outbox.events.published` | Publicaciones exitosas |
 | `outbox.events.rescheduled` | Fallos recuperables |
 | `outbox.events.failed` | Fallos permanentes o agotados |
+| `outbox.events.lock.lost` | Claims reclamados por otra instancia a mitad de vuelo |
 | `outbox.events.recovered` | Locks abandonados recuperados |
 | `outbox.publication.duration` | Latencia de publicación |
 | `outbox.pending.count` | Backlog actual |

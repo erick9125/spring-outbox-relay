@@ -8,6 +8,7 @@ import io.github.erick9125.outbox.domain.OutboxEvent;
 import io.github.erick9125.outbox.support.AbstractPostgresIntegrationTest;
 import io.github.erick9125.outbox.support.OutboxTestSupport;
 import io.github.erick9125.outbox.support.OutboxTestSupport.Fixture;
+import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
@@ -46,6 +47,35 @@ class JdbcOutboxRepositoryIntegrationTest extends AbstractPostgresIntegrationTes
     assertThat(event.payload()).contains("42");
     assertThat(event.headers()).contains("correlation-id");
     assertThat(event.destination()).isEqualTo("orders.events");
+  }
+
+  @Test
+  void marksPublishedWithoutABrokerMessageIdAndKeepsExistingHeaders() {
+    // Not every broker returns a message id. jsonb_set is strict, so a null id used to collapse the
+    // whole headers column to NULL, violate its NOT NULL constraint, and make the relay treat an
+    // already-published event as a retryable failure — republishing it on every attempt.
+    UUID id =
+        fixture
+            .publisher()
+            .publish(
+                OutboxMessage.builder()
+                    .aggregateType("ORDER")
+                    .aggregateId("order-4")
+                    .eventType("order.created")
+                    .destination("orders.events")
+                    .payload(Map.of("total", 7))
+                    .header("correlation-id", "keep-me")
+                    .build());
+
+    fixture.repository().claimBatch(1, "worker-a");
+
+    assertThat(fixture.repository().markPublished(id, "worker-a", Instant.now(), null)).isTrue();
+
+    OutboxEvent event = fixture.repository().findById(id).orElseThrow();
+    assertThat(event.status()).isEqualTo(OutboxStatus.PUBLISHED);
+    assertThat(event.headers()).isNotNull();
+    assertThat(event.headers()).contains("correlation-id").contains("keep-me");
+    assertThat(event.publishedAt()).isNotNull();
   }
 
   @Test

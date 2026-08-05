@@ -13,6 +13,7 @@ import io.github.erick9125.outbox.exception.RetryablePublicationException;
 import io.github.erick9125.outbox.support.AbstractPostgresIntegrationTest;
 import io.github.erick9125.outbox.support.OutboxTestSupport;
 import io.github.erick9125.outbox.support.OutboxTestSupport.Fixture;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -227,11 +228,98 @@ class OutboxRelayIntegrationTest extends AbstractPostgresIntegrationTest {
                     .payload(Map.of("s", "failed"))
                     .build());
 
-    fixture.repository().markPublished(published, Instant.now(), "broker-1");
-    fixture.repository().markFailed(failed, 5, "exhausted");
+    // The terminal transitions are fenced on the current owner, so the rows have to be claimed
+    // before they can be moved out of PENDING.
+    fixture.repository().claimBatch(10, "setup-worker");
+    assertThat(fixture.repository().markPublished(published, "setup-worker", Instant.now(), "b-1"))
+        .isTrue();
+    assertThat(fixture.repository().markFailed(failed, "setup-worker", 5, "exhausted")).isTrue();
+    assertThat(
+            fixture
+                .repository()
+                .reschedule(
+                    pending, "setup-worker", 0, Instant.now().minus(Duration.ofSeconds(1)), null))
+        .isTrue();
 
     List<OutboxEvent> claimed = fixture.repository().claimBatch(10, "worker-a");
     assertThat(claimed.stream().map(OutboxEvent::id).collect(Collectors.toSet()))
         .containsExactly(pending);
+  }
+
+  @Test
+  void leavesTheRowAloneWhenTheClaimWasLostBeforeItCouldBeSettled() {
+    UUID id =
+        fixture
+            .publisher()
+            .publish(
+                OutboxMessage.builder()
+                    .aggregateType("ORDER")
+                    .aggregateId("stolen")
+                    .eventType("order.created")
+                    .destination("orders.events")
+                    .payload(Map.of("s", "stolen"))
+                    .build());
+
+    // worker-a claims the event, then stalls long enough for recovery to reclaim it.
+    List<OutboxEvent> claimedByA = fixture.repository().claimBatch(1, "worker-a");
+    assertThat(claimedByA).hasSize(1);
+    fixture.repository().recoverAbandoned(Instant.now().plus(Duration.ofMinutes(1)));
+
+    // worker-b now owns the row and publishes it.
+    OutboxRelay workerB =
+        OutboxTestSupport.relay(
+            fixture, event -> new PublicationResult("broker-b", Instant.now()), "worker-b");
+    assertThat(workerB.relayBatch().published()).isEqualTo(1);
+
+    OutboxEvent afterB = fixture.repository().findById(id).orElseThrow();
+
+    // worker-a finally comes back. Its outcome must not touch the row.
+    assertThat(fixture.repository().markPublished(id, "worker-a", Instant.now(), "broker-a"))
+        .isFalse();
+    assertThat(fixture.repository().markFailed(id, "worker-a", 9, "stale failure")).isFalse();
+    assertThat(
+            fixture
+                .repository()
+                .reschedule(id, "worker-a", 9, Instant.now().plus(Duration.ofHours(1)), "stale"))
+        .isFalse();
+
+    OutboxEvent afterA = fixture.repository().findById(id).orElseThrow();
+    assertThat(afterA).isEqualTo(afterB);
+    assertThat(afterA.status()).isEqualTo(OutboxStatus.PUBLISHED);
+    assertThat(afterA.headers()).contains("broker-b");
+  }
+
+  @Test
+  void reportsLockLossInsteadOfRepublishingWhenTheClaimIsGone() {
+    fixture
+        .publisher()
+        .publish(
+            OutboxMessage.builder()
+                .aggregateType("ORDER")
+                .aggregateId("hijacked")
+                .eventType("order.created")
+                .destination("orders.events")
+                .payload(Map.of("s", "hijacked"))
+                .build());
+
+    // The claim is taken away between the claim and the publication, which is what a stalled
+    // instance experiences after lock-timeout elapses.
+    OutboxRelay workerA =
+        OutboxTestSupport.relay(
+            fixture,
+            event -> {
+              fixture.repository().recoverAbandoned(Instant.now().plus(Duration.ofMinutes(1)));
+              fixture.repository().claimBatch(1, "worker-b");
+              return new PublicationResult("broker-a", Instant.now());
+            },
+            "worker-a");
+
+    RelayResult result = workerA.relayBatch();
+
+    assertThat(result.claimed()).isEqualTo(1);
+    assertThat(result.lockLost()).isEqualTo(1);
+    assertThat(result.published()).isZero();
+    assertThat(result.rescheduled()).isZero();
+    assertThat(result.failed()).isZero();
   }
 }

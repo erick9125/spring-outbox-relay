@@ -6,6 +6,17 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- The terminal transitions (`markPublished`, `reschedule`, `markFailed`) are now fenced on the
+  current claim owner: `AND status = 'PROCESSING' AND locked_by = ?`. A claim is a lease, so a
+  stalled instance could previously overwrite the state of the instance that had taken the row
+  over after `lock-timeout` — resurrecting a published event, rescheduling a delivered one, or
+  marking a successful publication as failed. Lost claims are now reported through the new
+  `outbox.events.lock.lost` metric and `RelayResult.lockLost()`, and the row is left untouched.
+- `markPublished` no longer fails when the broker adapter reports no message id. `jsonb_set` is
+  strict, so a null id collapsed the `headers` column to NULL and violated its NOT NULL
+  constraint; the relay then treated the already-published event as a retryable failure and
+  republished it on every attempt until its budget ran out.
+
 - Auto-configuration is now ordered after the `DataSource`, `JdbcTemplate`, Jackson, Kafka,
   metrics and observation auto-configurations. Without that ordering its `@ConditionalOnBean`
   checks ran too early, so no broker publisher, relay or scheduler was ever registered and
