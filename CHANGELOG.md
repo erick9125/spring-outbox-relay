@@ -12,6 +12,10 @@ All notable changes to this project will be documented in this file.
   over after `lock-timeout` — resurrecting a published event, rescheduling a delivered one, or
   marking a successful publication as failed. Lost claims are now reported through the new
   `outbox.events.lock.lost` metric and `RelayResult.lockLost()`, and the row is left untouched.
+- `gradlew` is now committed with the executable bit set. Without it every Linux checkout —
+  including CI — fails with `./gradlew: Permission denied` before any task can run.
+- The CI push trigger now watches `master`, the actual default branch, instead of a `main`
+  branch that never existed, so pushes to the default branch are checked at all.
 - `markPublished` no longer fails when the broker adapter reports no message id. `jsonb_set` is
   strict, so a null id collapsed the `headers` column to NULL and violated its NOT NULL
   constraint; the relay then treated the already-published event as a retryable failure and
