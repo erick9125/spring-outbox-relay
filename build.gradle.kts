@@ -30,32 +30,39 @@ dependencyManagement {
     }
 }
 
-val micrometerVersion = "1.15.2"
-
 dependencies {
     api("org.springframework.boot:spring-boot-starter-jdbc")
     api("org.springframework.boot:spring-boot-autoconfigure")
-    api("org.springframework.kafka:spring-kafka")
     api("com.fasterxml.jackson.core:jackson-databind")
     api("com.fasterxml.jackson.datatype:jackson-datatype-jsr310")
 
-    implementation("org.flywaydb:flyway-core")
-    implementation("org.flywaydb:flyway-database-postgresql")
-    implementation("io.micrometer:micrometer-core")
-    implementation("io.micrometer:micrometer-observation")
+    // Exposed through the public constructors of OutboxMetrics, DefaultOutboxRelay and
+    // DefaultOutboxPublisher, so consumers building those beans by hand need them to compile.
+    api("io.micrometer:micrometer-core")
+    api("io.micrometer:micrometer-observation")
+
+    // Kafka is one broker adapter among others: consumers using a different broker must not be
+    // forced to put spring-kafka on their classpath. KafkaOutboxPublisher and its auto-configured
+    // bean are guarded by @ConditionalOnClass(KafkaTemplate.class).
+    compileOnly("org.springframework.kafka:spring-kafka")
+
     implementation("org.slf4j:slf4j-api")
 
     compileOnly("org.springframework.boot:spring-boot-configuration-processor")
     annotationProcessor("org.springframework.boot:spring-boot-configuration-processor")
 
-    runtimeOnly("org.postgresql:postgresql")
-
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+    testImplementation("org.springframework.kafka:spring-kafka")
     testImplementation("org.springframework.kafka:spring-kafka-test")
+    // Flyway only applies the shipped schema in tests. Shipping it as a runtime dependency would
+    // activate FlywayAutoConfiguration inside every consuming application.
+    testImplementation("org.flywaydb:flyway-core")
+    testImplementation("org.flywaydb:flyway-database-postgresql")
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.testcontainers:postgresql")
     testImplementation("org.testcontainers:kafka")
     testImplementation("org.assertj:assertj-core")
+    testRuntimeOnly("org.postgresql:postgresql")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
@@ -96,15 +103,28 @@ tasks.withType<JavaCompile> {
 }
 
 spotless {
+    // The target must exclude build directories explicitly. A bare "examples/**" glob makes Spotless
+    // read the example project's build output, which Gradle rejects as an undeclared task dependency
+    // and fails `check` outright.
     java {
-        target("src/**/*.java", "examples/**/*.java")
+        target(
+            fileTree(projectDir) {
+                include("src/**/*.java", "examples/**/*.java")
+                exclude("**/build/**", "**/.gradle/**")
+            },
+        )
         googleJavaFormat("1.27.0")
         removeUnusedImports()
         trimTrailingWhitespace()
         endWithNewline()
     }
     kotlinGradle {
-        target("*.gradle.kts", "examples/**/*.gradle.kts")
+        target(
+            fileTree(projectDir) {
+                include("*.gradle.kts", "examples/**/*.gradle.kts")
+                exclude("**/build/**", "**/.gradle/**")
+            },
+        )
         ktlint()
     }
 }

@@ -132,22 +132,40 @@ preciso, actualizaciones condicionales y bloqueos de corta duración. JPA no es 
 implementation("io.github.erick9125:spring-outbox-relay:0.1.0")
 ```
 
-Tu aplicación también debe incluir:
+La librería mantiene a propósito una huella mínima de dependencias: no arrastra ni Kafka ni
+Flyway a tu classpath, así que adoptarla no puede activar una herramienta de migraciones que
+no pediste. Declara tú lo que uses:
 
 - `spring-boot-starter-jdbc`
 - driver de PostgreSQL
-- `spring-kafka`
-- Flyway (recomendado)
+- `spring-kafka` — solo necesario para el adaptador Kafka incluido; opcional si aportas tu
+  propio `MessageBrokerPublisher`
+- Flyway (recomendado, para aplicar el esquema incluido)
 
-La librería incluye auto-configuración de Spring Boot. Cuando existen JDBC y un
+La librería incluye auto-configuración de Spring Boot. Cuando existen un `DataSource` y un
 `KafkaTemplate`, se registran automáticamente el publisher, el relay, la recuperación de
-locks y la limpieza de eventos publicados.
+locks y la limpieza de eventos publicados. Sin `KafkaTemplate` —y sin ningún otro bean
+`MessageBrokerPublisher`— el publisher se registra igual, de modo que los eventos se
+acumulan de forma durable, y el relay y su planificación quedan apagados.
 
 ---
 
 ## Esquema de base de datos
 
-Aplica la migración Flyway incluida en `db/migration`, o crea una tabla equivalente:
+La migración se publica en `classpath:db/outbox`, deliberadamente fuera de la ubicación por
+defecto de Flyway (`classpath:db/migration`): una migración de librería en la ubicación por
+defecto colisionaría con el `V1__…` de tu aplicación y rompería el arranque. Añade la
+ubicación junto a la tuya:
+
+```yaml
+spring:
+  flyway:
+    locations:
+      - classpath:db/migration
+      - classpath:db/outbox
+```
+
+O crea una tabla equivalente por tu cuenta:
 
 ```sql
 CREATE TABLE outbox_event (

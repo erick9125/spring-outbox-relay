@@ -40,7 +40,7 @@ public final class OutboxTestSupport {
   }
 
   public static void migrate(DataSource dataSource) {
-    Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").load().migrate();
+    Flyway.configure().dataSource(dataSource).locations("classpath:db/outbox").load().migrate();
   }
 
   public static ObjectMapper objectMapper() {

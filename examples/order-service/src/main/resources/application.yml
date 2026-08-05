@@ -10,6 +10,11 @@ spring:
     password: outbox
   flyway:
     enabled: true
+    # The library ships its schema under classpath:db/outbox so that its migration cannot collide
+    # with the application's own versions in the default classpath:db/migration location.
+    locations:
+      - classpath:db/migration
+      - classpath:db/outbox
   kafka:
     bootstrap-servers: localhost:9092
     consumer:
