@@ -1,0 +1,20 @@
+name: Feature request
+description: Propose a focused improvement for spring-outbox-relay
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What should change and why?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope check
+      description: Confirm this stays aligned with PostgreSQL → Kafka outbox relay focus.
+      value: |
+        - [ ] Related to outbox persistence, claim, publish, retry, recovery, cleanup, or observability
+        - [ ] Does not require promising exactly-once delivery

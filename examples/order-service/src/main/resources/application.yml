@@ -1,0 +1,43 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: order-service
+  datasource:
+    url: jdbc:postgresql://localhost:5432/outbox
+    username: outbox
+    password: outbox
+  flyway:
+    enabled: true
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+  outbox:
+    relay:
+      enabled: true
+      batch-size: 50
+      poll-interval: 1s
+      lock-timeout: 5m
+      default-max-attempts: 5
+      cleanup:
+        enabled: true
+        retention: 7d
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,metrics,prometheus
+  observations:
+    enabled: true
+
+logging:
+  level:
+    io.github.erick9125.outbox: INFO

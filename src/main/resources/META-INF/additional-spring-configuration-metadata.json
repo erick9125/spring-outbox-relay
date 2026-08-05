@@ -1,0 +1,53 @@
+{
+  "groups": [
+    {
+      "name": "spring.outbox.relay",
+      "type": "io.github.erick9125.outbox.configuration.OutboxProperties",
+      "sourceType": "io.github.erick9125.outbox.configuration.OutboxProperties"
+    }
+  ],
+  "properties": [
+    {
+      "name": "spring.outbox.relay.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Enable the outbox relay auto-configuration and schedulers.",
+      "defaultValue": true
+    },
+    {
+      "name": "spring.outbox.relay.batch-size",
+      "type": "java.lang.Integer",
+      "description": "Maximum number of pending events claimed per poll.",
+      "defaultValue": 100
+    },
+    {
+      "name": "spring.outbox.relay.poll-interval",
+      "type": "java.time.Duration",
+      "description": "Delay between relay polls.",
+      "defaultValue": "1s"
+    },
+    {
+      "name": "spring.outbox.relay.lock-timeout",
+      "type": "java.time.Duration",
+      "description": "Age after which PROCESSING locks are considered abandoned.",
+      "defaultValue": "5m"
+    },
+    {
+      "name": "spring.outbox.relay.default-max-attempts",
+      "type": "java.lang.Integer",
+      "description": "Default max publication attempts for new events.",
+      "defaultValue": 5
+    },
+    {
+      "name": "spring.outbox.relay.cleanup.enabled",
+      "type": "java.lang.Boolean",
+      "description": "Enable cleanup of published outbox events.",
+      "defaultValue": true
+    },
+    {
+      "name": "spring.outbox.relay.cleanup.retention",
+      "type": "java.time.Duration",
+      "description": "Retention period for published events before deletion.",
+      "defaultValue": "7d"
+    }
+  ]
+}
