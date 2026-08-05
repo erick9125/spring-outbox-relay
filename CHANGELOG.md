@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [0.1.0-SNAPSHOT] - unreleased
 
+### Changed
+
+- Claiming a batch is now a single statement. It was a SELECT, then one UPDATE per row, then a
+  SELECT to read the rows back: `2 + batch-size` round trips every poll — 102 per second at the
+  default settings — all while holding row locks. A CTE with `FOR UPDATE SKIP LOCKED` and
+  `RETURNING` does the same work atomically in one.
+- The recovery and cleanup jobs now work in bounded batches and drain in a loop, controlled by the
+  new `spring.outbox.relay.maintenance-batch-size` (default 500). Both statements were unbounded:
+  after a long outage, or against months of retained events, a single UPDATE or DELETE would hold
+  locks across the entire backlog, bloat the table and compete with the relay for the same rows.
+  `recoverAbandoned` and `deletePublishedBefore` take a row limit and report how many rows they
+  touched.
+
+### Added
+
+- Configuration metadata for the properties that had none: `instance-id`, `recovery-interval`,
+  `maintenance-batch-size`, `retry.*` and `cleanup.interval` now autocomplete in the IDE.
+- Tests for the cleanup service, which had none at all.
+
 ### Fixed
 
 - Headers attached to an `OutboxMessage` now reach the broker. They were serialized into the

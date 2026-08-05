@@ -225,6 +225,8 @@ spring:
       lock-timeout: 5m
       default-max-attempts: 5
       instance-id: order-service-1
+      recovery-interval: 1m
+      maintenance-batch-size: 500
       retry:
         initial-delay: 5s
         maximum-delay: 5m
@@ -244,6 +246,8 @@ spring:
 | `spring.outbox.relay.lock-timeout` | `5m` | Age after which `PROCESSING` locks are recovered |
 | `spring.outbox.relay.default-max-attempts` | `5` | Default retry budget for new events |
 | `spring.outbox.relay.instance-id` | hostname + pid | Worker identity stored in `locked_by` |
+| `spring.outbox.relay.recovery-interval` | `1m` | Delay between recovery runs |
+| `spring.outbox.relay.maintenance-batch-size` | `500` | Rows per statement in the recovery and cleanup jobs |
 | `spring.outbox.relay.retry.initial-delay` | `5s` | Base backoff delay |
 | `spring.outbox.relay.retry.maximum-delay` | `5m` | Backoff ceiling |
 | `spring.outbox.relay.cleanup.retention` | `7d` | Retention for `PUBLISHED` rows |

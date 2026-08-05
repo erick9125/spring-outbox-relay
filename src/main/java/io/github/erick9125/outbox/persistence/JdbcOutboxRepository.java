@@ -9,7 +9,7 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Clock;
 import java.time.Instant;
-import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -94,48 +94,49 @@ public final class JdbcOutboxRepository implements OutboxRepository {
     return claimed == null ? List.of() : claimed;
   }
 
+  /**
+   * Selects, locks and claims a batch in a single statement.
+   *
+   * <p>This used to be a SELECT, then one UPDATE per row, then a SELECT to read the rows back — 2 +
+   * batch-size round trips every poll, 102 of them per second at the default settings, all while
+   * holding row locks. The CTE does the same work atomically: {@code FOR UPDATE SKIP LOCKED} still
+   * hands disjoint batches to concurrent workers, and {@code RETURNING} gives back the rows the
+   * update touched.
+   *
+   * <p>{@code RETURNING} has no defined order, so the batch is sorted afterwards to keep the
+   * roughly-FIFO delivery order the previous {@code ORDER BY created_at} produced.
+   */
   private List<OutboxEvent> doClaimBatch(int batchSize, String lockedBy) {
     Instant now = clock.instant();
-    List<UUID> ids =
+    List<OutboxEvent> claimed =
         jdbcTemplate.query(
             """
-                        SELECT id
-                        FROM outbox_event
-                        WHERE status = ?
-                          AND available_at <= ?
-                        ORDER BY created_at
-                        FOR UPDATE SKIP LOCKED
-                        LIMIT ?
-                        """,
-            (rs, rowNum) -> (UUID) rs.getObject("id"),
+                WITH due AS (
+                    SELECT id
+                    FROM outbox_event
+                    WHERE status = ?
+                      AND available_at <= ?
+                    ORDER BY available_at, created_at
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT ?
+                )
+                UPDATE outbox_event o
+                SET status = ?,
+                    locked_at = ?,
+                    locked_by = ?
+                FROM due
+                WHERE o.id = due.id
+                RETURNING o.*
+                """,
+            ROW_MAPPER,
             OutboxStatus.PENDING.name(),
             Timestamp.from(now),
-            batchSize);
+            batchSize,
+            OutboxStatus.PROCESSING.name(),
+            Timestamp.from(now),
+            lockedBy);
 
-    if (ids.isEmpty()) {
-      return List.of();
-    }
-
-    for (UUID id : ids) {
-      jdbcTemplate.update(
-          """
-                    UPDATE outbox_event
-                    SET status = ?,
-                        locked_at = ?,
-                        locked_by = ?
-                    WHERE id = ?
-                    """,
-          OutboxStatus.PROCESSING.name(),
-          Timestamp.from(now),
-          lockedBy,
-          id);
-    }
-
-    String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
-    return jdbcTemplate.query(
-        "SELECT * FROM outbox_event WHERE id IN (" + placeholders + ") ORDER BY created_at",
-        ROW_MAPPER,
-        ids.toArray());
+    return claimed.stream().sorted(Comparator.comparing(OutboxEvent::createdAt)).toList();
   }
 
   @Override
@@ -225,7 +226,7 @@ public final class JdbcOutboxRepository implements OutboxRepository {
   }
 
   @Override
-  public int recoverAbandoned(Instant lockedBefore) {
+  public int recoverAbandoned(Instant lockedBefore, int limit) {
     return jdbcTemplate.update(
         """
                 UPDATE outbox_event
@@ -233,25 +234,39 @@ public final class JdbcOutboxRepository implements OutboxRepository {
                     locked_at = NULL,
                     locked_by = NULL,
                     available_at = ?
-                WHERE status = ?
-                  AND locked_at < ?
+                WHERE id IN (
+                    SELECT id
+                    FROM outbox_event
+                    WHERE status = ?
+                      AND locked_at < ?
+                    ORDER BY locked_at
+                    LIMIT ?
+                )
                 """,
         OutboxStatus.PENDING.name(),
         Timestamp.from(clock.instant()),
         OutboxStatus.PROCESSING.name(),
-        Timestamp.from(lockedBefore));
+        Timestamp.from(lockedBefore),
+        limit);
   }
 
   @Override
-  public int deletePublishedBefore(Instant publishedBefore) {
+  public int deletePublishedBefore(Instant publishedBefore, int limit) {
     return jdbcTemplate.update(
         """
                 DELETE FROM outbox_event
-                WHERE status = ?
-                  AND published_at < ?
+                WHERE id IN (
+                    SELECT id
+                    FROM outbox_event
+                    WHERE status = ?
+                      AND published_at < ?
+                    ORDER BY published_at
+                    LIMIT ?
+                )
                 """,
         OutboxStatus.PUBLISHED.name(),
-        Timestamp.from(publishedBefore));
+        Timestamp.from(publishedBefore),
+        limit);
   }
 
   @Override

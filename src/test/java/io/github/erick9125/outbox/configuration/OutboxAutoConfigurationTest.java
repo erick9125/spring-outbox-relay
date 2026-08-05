@@ -243,12 +243,12 @@ class OutboxAutoConfigurationTest {
     }
 
     @Override
-    public int recoverAbandoned(Instant lockedBefore) {
+    public int recoverAbandoned(Instant lockedBefore, int limit) {
       return 0;
     }
 
     @Override
-    public int deletePublishedBefore(Instant publishedBefore) {
+    public int deletePublishedBefore(Instant publishedBefore, int limit) {
       return 0;
     }
 
