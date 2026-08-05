@@ -1,5 +1,8 @@
 package io.github.erick9125.outbox.broker.kafka;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.erick9125.outbox.broker.MessageBrokerPublisher;
 import io.github.erick9125.outbox.domain.OutboxEvent;
 import io.github.erick9125.outbox.domain.PublicationResult;
@@ -7,7 +10,9 @@ import io.github.erick9125.outbox.exception.PermanentPublicationException;
 import io.github.erick9125.outbox.exception.RetryablePublicationException;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -15,10 +20,28 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.errors.InvalidTopicException;
 import org.apache.kafka.common.errors.RecordTooLargeException;
 import org.apache.kafka.common.errors.SerializationException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 
 public final class KafkaOutboxPublisher implements MessageBrokerPublisher {
+
+  private static final Logger log = LoggerFactory.getLogger(KafkaOutboxPublisher.class);
+
+  /** Header names the relay owns. Callers cannot set or shadow these. */
+  private static final Set<String> RESERVED_HEADERS =
+      Set.of("event-id", "event-type", "event-version", "aggregate-type", "aggregate-id");
+
+  private static final TypeReference<Map<String, String>> HEADERS_TYPE = new TypeReference<>() {};
+
+  /**
+   * Reads back the {@code headers} column, whose shape this library controls end to end: a flat
+   * JSON object of strings written by {@code DefaultOutboxPublisher}. It is deliberately not the
+   * application's {@code ObjectMapper} — a customised one could change how that internal format is
+   * read.
+   */
+  private static final ObjectMapper HEADER_MAPPER = new ObjectMapper();
 
   private final KafkaTemplate<String, String> kafkaTemplate;
   private final Clock clock;
@@ -39,6 +62,8 @@ public final class KafkaOutboxPublisher implements MessageBrokerPublisher {
   public PublicationResult publish(OutboxEvent event) {
     ProducerRecord<String, String> record =
         new ProducerRecord<>(event.destination(), event.partitionKey(), event.payload());
+
+    addUserHeaders(record, event);
 
     addHeader(record, "event-id", event.id().toString());
     addHeader(record, "event-type", event.eventType());
@@ -63,6 +88,43 @@ public final class KafkaOutboxPublisher implements MessageBrokerPublisher {
       throw new RetryablePublicationException("Interrupted while publishing to Kafka", exception);
     } catch (ExecutionException exception) {
       throw mapExecutionFailure(exception);
+    }
+  }
+
+  /**
+   * Copies the headers the caller attached to the {@code OutboxMessage} onto the record.
+   *
+   * <p>Names that clash with the relay's own metadata are dropped rather than added alongside it:
+   * Kafka headers are multi-valued, so appending a second {@code event-id} would leave consumers
+   * deduplicating against whichever one they happened to read first.
+   */
+  private static void addUserHeaders(ProducerRecord<String, String> record, OutboxEvent event) {
+    for (Map.Entry<String, String> header : readHeaders(event).entrySet()) {
+      if (RESERVED_HEADERS.contains(header.getKey())) {
+        log.warn(
+            "Dropping header '{}' on outbox event {}: the name is reserved for relay metadata",
+            header.getKey(),
+            event.id());
+        continue;
+      }
+      addHeader(record, header.getKey(), header.getValue());
+    }
+  }
+
+  private static Map<String, String> readHeaders(OutboxEvent event) {
+    String headers = event.headers();
+    if (headers == null || headers.isBlank()) {
+      return Map.of();
+    }
+    try {
+      Map<String, String> parsed = HEADER_MAPPER.readValue(headers, HEADERS_TYPE);
+      return parsed == null ? Map.of() : parsed;
+    } catch (JsonProcessingException exception) {
+      // This library writes the column, so unreadable content means the row was changed by
+      // something else. Failing permanently puts it in FAILED with last_error for an operator to
+      // look at, instead of retrying what cannot succeed or dropping the headers unnoticed.
+      throw new PermanentPublicationException(
+          "Outbox event " + event.id() + " has headers that are not a flat JSON object", exception);
     }
   }
 

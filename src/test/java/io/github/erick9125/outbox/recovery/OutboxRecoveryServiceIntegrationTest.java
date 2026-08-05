@@ -31,16 +31,14 @@ class OutboxRecoveryServiceIntegrationTest extends AbstractPostgresIntegrationTe
   @Test
   void recoversAbandonedLocksAndPreservesAttempts() {
     UUID id =
-        fixture
-            .publisher()
-            .publish(
-                OutboxMessage.builder()
-                    .aggregateType("ORDER")
-                    .aggregateId("abandoned")
-                    .eventType("order.created")
-                    .destination("orders.events")
-                    .payload(Map.of("ok", true))
-                    .build());
+        fixture.publish(
+            OutboxMessage.builder()
+                .aggregateType("ORDER")
+                .aggregateId("abandoned")
+                .eventType("order.created")
+                .destination("orders.events")
+                .payload(Map.of("ok", true))
+                .build());
 
     fixture.repository().claimBatch(1, "dead-worker");
     fixture
@@ -84,16 +82,14 @@ class OutboxRecoveryServiceIntegrationTest extends AbstractPostgresIntegrationTe
   @Test
   void doesNotRecoverFreshLocks() {
     UUID id =
-        fixture
-            .publisher()
-            .publish(
-                OutboxMessage.builder()
-                    .aggregateType("ORDER")
-                    .aggregateId("fresh")
-                    .eventType("order.created")
-                    .destination("orders.events")
-                    .payload(Map.of("ok", true))
-                    .build());
+        fixture.publish(
+            OutboxMessage.builder()
+                .aggregateType("ORDER")
+                .aggregateId("fresh")
+                .eventType("order.created")
+                .destination("orders.events")
+                .payload(Map.of("ok", true))
+                .build());
 
     fixture.repository().claimBatch(1, "alive-worker");
 

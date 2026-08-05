@@ -298,6 +298,11 @@ public class OrderService {
 Si falla el insert del pedido, el evento outbox también hace rollback.
 Si falla el insert del outbox, el pedido también hace rollback.
 
+`publish()` exige una transacción activa y lanza `IllegalStateException` si no hay ninguna. Es
+deliberado: llamado fuera de una transacción, el registro del outbox se commitearía por su
+cuenta, la atomicidad para la que existe esta librería desaparecería, y nada lo diría — el
+síntoma aparecería mucho después como divergencia entre la base de datos y el broker.
+
 ### 2. Contrato del mensaje
 
 ```java
@@ -328,6 +333,11 @@ Cada registro publicado incluye:
 | `event-version` | Versión del contrato |
 | `aggregate-type` | Familia del agregado |
 | `aggregate-id` | Identidad del agregado |
+
+Los headers que agregues con `.header(...)` o `.headers(...)` se entregan junto a estos. Los
+cinco nombres de arriba están reservados para los metadatos del relay: un header con el mismo
+nombre se descarta con un WARN en lugar de entregarse como segundo valor, para que un
+consumidor que deduplica por `event-id` pueda confiar en lo que lee.
 
 ### 4. Guía para consumidores
 

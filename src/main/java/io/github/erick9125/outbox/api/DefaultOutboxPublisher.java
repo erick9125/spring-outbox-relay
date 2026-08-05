@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 public final class DefaultOutboxPublisher implements OutboxPublisher {
 
@@ -45,6 +46,7 @@ public final class DefaultOutboxPublisher implements OutboxPublisher {
 
   @Override
   public UUID publish(OutboxMessage message) {
+    requireActiveTransaction(message);
     return Observation.createNotStarted("outbox.persist", observationRegistry)
         .lowCardinalityKeyValue("destination", message.destination())
         .lowCardinalityKeyValue("event_type", message.eventType())
@@ -57,6 +59,28 @@ public final class DefaultOutboxPublisher implements OutboxPublisher {
               metrics.incrementCreated(message.destination(), message.eventType());
               return id;
             });
+  }
+
+  /**
+   * The whole point of the outbox pattern is that the event and the business change commit or roll
+   * back together. Called outside a transaction the insert commits on its own, and the guarantee is
+   * gone — silently, and in a way that only shows up as drift between the database and the broker
+   * long after the fact. Failing loudly here turns the most common integration mistake into an
+   * immediate, obvious error.
+   */
+  private static void requireActiveTransaction(OutboxMessage message) {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "OutboxPublisher.publish() requires an active transaction, but none was found while "
+              + "publishing event type '"
+              + message.eventType()
+              + "' for aggregate "
+              + message.aggregateType()
+              + "/"
+              + message.aggregateId()
+              + ". Call it from inside the @Transactional method that persists the business "
+              + "change, so the outbox row and that change commit or roll back together.");
+    }
   }
 
   private String writeJson(Object value, String fieldName) {

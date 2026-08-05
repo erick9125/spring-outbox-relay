@@ -6,6 +6,18 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Headers attached to an `OutboxMessage` now reach the broker. They were serialized into the
+  `headers` column and then never read: the Kafka adapter only ever wrote its own five metadata
+  headers, so a documented feature — the `correlation-id` in the README's own example — was
+  silently dropped on every publication. Names that clash with relay metadata are discarded with
+  a warning rather than delivered as a second value for the same key.
+- `publish()` now fails fast with `IllegalStateException` when no transaction is active. Called
+  outside one, the outbox insert committed on its own and the atomicity the pattern exists for
+  was silently gone. **Breaking** for callers that were (incorrectly) publishing outside a
+  transaction.
+- The Kafka adapter has tests. `src/test/.../broker/` was an empty directory, which is why the
+  dropped headers went unnoticed.
+
 - The terminal transitions (`markPublished`, `reschedule`, `markFailed`) are now fenced on the
   current claim owner: `AND status = 'PROCESSING' AND locked_by = ?`. A claim is a lease, so a
   stalled instance could previously overwrite the state of the instance that had taken the row
