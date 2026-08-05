@@ -1,1 +1,2 @@
 io.github.erick9125.outbox.configuration.OutboxAutoConfiguration
+io.github.erick9125.outbox.configuration.OutboxSchedulingAutoConfiguration
