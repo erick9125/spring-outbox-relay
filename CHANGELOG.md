@@ -16,6 +16,9 @@ All notable changes to this project will be documented in this file.
   including CI — fails with `./gradlew: Permission denied` before any task can run.
 - The CI push trigger now watches `master`, the actual default branch, instead of a `main`
   branch that never existed, so pushes to the default branch are checked at all.
+- The CI matrix no longer claims to test Java 25. Gradle 8.14.3 cannot run on it at all (Java 24
+  is its ceiling, Java 25 needs Gradle 9.1+), and the pinned toolchain meant the entry compiled
+  and tested against Java 21 anyway.
 - `markPublished` no longer fails when the broker adapter reports no message id. `jsonb_set` is
   strict, so a null id collapsed the `headers` column to NULL and violated its NOT NULL
   constraint; the relay then treated the already-published event as a retryable failure and
