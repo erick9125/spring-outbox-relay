@@ -140,22 +140,36 @@ public final class KafkaOutboxPublisher implements MessageBrokerPublisher {
   }
 
   /**
-   * Classifies a producer failure. Unwraps the {@code CompletionException} and {@code
-   * KafkaProducerException} layers the client adds so the decision is made on the real cause.
+   * Classifies a producer failure.
+   *
+   * <p>The whole cause chain is searched, not just the outermost exception. Spring for Apache Kafka
+   * wraps producer failures in a {@code KafkaProducerException}, so a broker rejecting a topic name
+   * arrives as {@code CompletionException → KafkaProducerException → InvalidTopicException}.
+   * Deciding on the outer layer classified every real Kafka failure as retryable, and an event
+   * bound for an invalid topic was rescheduled over and over instead of failing once.
    */
   private static RuntimeException mapFailure(Throwable failure) {
+    Throwable cause = unwrapPlumbing(failure);
+
+    for (Throwable current = cause; current != null; current = current.getCause()) {
+      if (current instanceof PermanentPublicationException permanent) {
+        return permanent;
+      }
+      if (isPermanent(current)) {
+        return new PermanentPublicationException("Permanent Kafka publication failure", cause);
+      }
+    }
+    return new RetryablePublicationException("Retryable Kafka publication failure", cause);
+  }
+
+  /** Strips the future's own wrappers so the reported cause is the broker's, not the plumbing's. */
+  private static Throwable unwrapPlumbing(Throwable failure) {
     Throwable cause = failure;
     while ((cause instanceof CompletionException || cause instanceof ExecutionException)
         && cause.getCause() != null) {
       cause = cause.getCause();
     }
-    if (cause instanceof PermanentPublicationException permanent) {
-      return permanent;
-    }
-    if (isPermanent(cause)) {
-      return new PermanentPublicationException("Permanent Kafka publication failure", cause);
-    }
-    return new RetryablePublicationException("Retryable Kafka publication failure", cause);
+    return cause;
   }
 
   private static boolean isPermanent(Throwable cause) {

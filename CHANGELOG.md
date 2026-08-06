@@ -6,6 +6,24 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Permanent Kafka failures are recognised again. Spring for Apache Kafka wraps producer failures in
+  a `KafkaProducerException`, so a rejected topic name arrives as
+  `CompletionException → KafkaProducerException → InvalidTopicException`. The adapter only unwrapped
+  the future's own layers and then classified the wrapper, which meant **every** real broker failure
+  came out retryable: an event bound for an invalid topic was rescheduled with backoff over and over
+  instead of failing once into an inspectable row. The whole cause chain is searched now.
+
+### Added
+
+- An end-to-end test that puts a real broker behind the relay, with Postgres and Kafka both on
+  Testcontainers. It publishes through the outbox, relays, and consumes the record back to assert
+  the payload, the record key, the five relay headers and the caller's own headers as a consumer
+  sees them, plus the broker offset recorded on the row. The Kafka path had only ever been exercised
+  against an in-memory `KafkaTemplate`; `org.testcontainers:kafka` was declared in the build and
+  unused. This test is what found the classification bug above.
+
+### Fixed
+
 - The library can be published at all. `publishToMavenLocal` failed with *"Publication only
   contains dependencies and/or constraints without a version"*: every dependency is declared without
   one because the Spring Boot BOM supplies it through `io.spring.dependency-management`, which is a
