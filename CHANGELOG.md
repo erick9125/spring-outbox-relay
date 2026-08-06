@@ -6,6 +6,17 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- The shipped migrations use timestamp-style versions (`V20260101000001__…`) instead of `V1__` and
+  `V2__`. Moving them out of `classpath:db/migration` was not enough: Flyway requires versions to be
+  unique **across every configured location**, not per location, so as soon as an application
+  followed the documented setup and added `classpath:db/outbox` to `spring.flyway.locations`, its own
+  `V1__` collided and startup failed with *"Found more than one migration with version 1"* — the
+  exact error the earlier move was meant to fix. Running the bundled `order-service` example is what
+  surfaced it; the test suite pointed Flyway at `classpath:db/outbox` alone and never saw the
+  conflict.
+
+### Fixed
+
 - Permanent Kafka failures are recognised again. Spring for Apache Kafka wraps producer failures in
   a `KafkaProducerException`, so a rejected topic name arrives as
   `CompletionException → KafkaProducerException → InvalidTopicException`. The adapter only unwrapped
