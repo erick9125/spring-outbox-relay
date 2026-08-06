@@ -21,6 +21,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.micrometer.observation.ObservationRegistry;
 import java.net.InetAddress;
+import java.time.Clock;
 import java.util.UUID;
 import javax.sql.DataSource;
 import org.springframework.beans.factory.ObjectProvider;
@@ -36,6 +37,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
 
 /**
  * Auto-configuration for the transactional outbox relay.
@@ -71,10 +73,20 @@ import org.springframework.kafka.core.KafkaTemplate;
 @Import(OutboxAutoConfiguration.OutboxKafkaConfiguration.class)
 public class OutboxAutoConfiguration {
 
+  /**
+   * The transaction manager is passed in rather than left to the repository, which would otherwise
+   * build a {@code DataSourceTransactionManager} of its own. That happened to work — it binds by
+   * {@code DataSource}, so it joins an application transaction on the same one — but it quietly
+   * ignored the manager the application configured.
+   */
   @Bean
   @ConditionalOnMissingBean
-  OutboxRepository outboxRepository(JdbcTemplate jdbcTemplate, OutboxProperties properties) {
-    return new JdbcOutboxRepository(jdbcTemplate, properties);
+  OutboxRepository outboxRepository(
+      JdbcTemplate jdbcTemplate,
+      OutboxProperties properties,
+      ObjectProvider<PlatformTransactionManager> transactionManager) {
+    return new JdbcOutboxRepository(
+        jdbcTemplate, properties, Clock.systemUTC(), transactionManager.getIfAvailable());
   }
 
   @Bean

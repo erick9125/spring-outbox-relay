@@ -337,6 +337,16 @@ OutboxMessage.builder()
     .build();
 ```
 
+Los campos de texto se validan contra el ancho de sus columnas al construir el mensaje
+—`aggregateType` 100, `aggregateId` y `eventType` 150, `destination` y `partitionKey` 200— así que
+un valor demasiado largo falla nombrando el campo, en vez de tumbar tu transacción de negocio con
+un error SQL crudo.
+
+Una restricción que la librería no comprueba por ti: el tipo `jsonb` de PostgreSQL rechaza el
+carácter NUL (`U+0000`) dentro de cadenas. Un payload que lo lleve hace fallar el insert, y con él
+la transacción que lo envuelve. Limpia los bytes NUL del texto que no produzcas tú antes de
+ponerlo en un evento.
+
 Los payloads se serializan con Jackson. Versiona tus eventos de forma deliberada con
 `eventType` y `eventVersion` para que los consumidores puedan evolucionar con seguridad.
 

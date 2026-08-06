@@ -335,6 +335,15 @@ OutboxMessage.builder()
     .build();
 ```
 
+The string fields are validated against the column widths when the message is built —
+`aggregateType` 100, `aggregateId` and `eventType` 150, `destination` and `partitionKey` 200 — so
+an over-long value fails with the field's name instead of taking your business transaction down
+with a raw SQL error.
+
+One constraint the library cannot check for you: PostgreSQL's `jsonb` rejects the NUL character
+(`U+0000`) inside strings. A payload carrying one fails the insert, and with it the surrounding
+transaction. Strip NUL bytes from text you did not produce yourself before putting it in an event.
+
 Payloads are serialized with Jackson. Version your event classes deliberately through
 `eventType` and `eventVersion` so consumers can evolve safely.
 

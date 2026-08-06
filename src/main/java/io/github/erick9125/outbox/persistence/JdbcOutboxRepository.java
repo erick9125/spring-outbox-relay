@@ -25,6 +25,8 @@ public final class JdbcOutboxRepository implements OutboxRepository {
 
   private static final RowMapper<OutboxEvent> ROW_MAPPER = JdbcOutboxRepository::mapRow;
 
+  private static final int MAX_LAST_ERROR_LENGTH = 4000;
+
   private final JdbcTemplate jdbcTemplate;
   private final OutboxProperties properties;
   private final Clock clock;
@@ -379,10 +381,15 @@ public final class JdbcOutboxRepository implements OutboxRepository {
     return timestamp == null ? null : timestamp.toInstant();
   }
 
+  /**
+   * Caps {@code last_error} so one runaway message cannot bloat the row, and marks the cut so an
+   * operator reading a truncated value knows there was more. {@code last_error} is TEXT, so the cap
+   * is about keeping the table sane rather than fitting a column.
+   */
   private static String truncate(String value) {
-    if (value == null) {
-      return null;
+    if (value == null || value.length() <= MAX_LAST_ERROR_LENGTH) {
+      return value;
     }
-    return value.length() <= 4000 ? value : value.substring(0, 4000);
+    return value.substring(0, MAX_LAST_ERROR_LENGTH) + "… [truncated]";
   }
 }

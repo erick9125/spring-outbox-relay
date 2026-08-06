@@ -28,8 +28,29 @@ public record OutboxMessage(
     if (maxAttempts != null && maxAttempts < 1) {
       throw new IllegalArgumentException("maxAttempts must be >= 1");
     }
+
+    // Checked against the column widths here, where the message names the field. Left to the
+    // insert,
+    // an over-long value surfaced as a raw SQL error that took the caller's business transaction
+    // down with it.
+    requireFits(aggregateType, "aggregateType", 100);
+    requireFits(aggregateId, "aggregateId", 150);
+    requireFits(eventType, "eventType", 150);
+    requireFits(destination, "destination", 200);
+    requireFits(partitionKey, "partitionKey", 200);
     headers =
         headers == null ? Map.of() : Collections.unmodifiableMap(new LinkedHashMap<>(headers));
+  }
+
+  private static void requireFits(String value, String field, int maxLength) {
+    if (value != null && value.length() > maxLength) {
+      throw new IllegalArgumentException(
+          field
+              + " must be at most "
+              + maxLength
+              + " characters to fit the outbox_event column, was "
+              + value.length());
+    }
   }
 
   public static Builder builder() {

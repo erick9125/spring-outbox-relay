@@ -3,12 +3,16 @@ package io.github.erick9125.outbox.persistence;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.github.erick9125.outbox.api.DefaultOutboxPublisher;
 import io.github.erick9125.outbox.api.OutboxMessage;
+import io.github.erick9125.outbox.api.OutboxPublisher;
 import io.github.erick9125.outbox.api.OutboxStatus;
 import io.github.erick9125.outbox.domain.OutboxEvent;
+import io.github.erick9125.outbox.observability.OutboxMetrics;
 import io.github.erick9125.outbox.support.AbstractPostgresIntegrationTest;
 import io.github.erick9125.outbox.support.OutboxTestSupport;
 import io.github.erick9125.outbox.support.OutboxTestSupport.Fixture;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
@@ -161,6 +165,58 @@ class JdbcOutboxRepositoryIntegrationTest extends AbstractPostgresIntegrationTes
     assertThat(fixture.repository().deletePublishedBefore(publishedBefore, 3)).isEqualTo(3);
     assertThat(fixture.repository().deletePublishedBefore(publishedBefore, 3)).isEqualTo(2);
     assertThat(fixture.repository().deletePublishedBefore(publishedBefore, 3)).isZero();
+  }
+
+  @Test
+  void countsAnEventOnlyOnceItsTransactionCommits() {
+    // Counting at insert time overstated the metric: the business transaction can still roll back,
+    // taking the outbox row with it, and the increment stayed.
+    SimpleMeterRegistry registry = new SimpleMeterRegistry();
+    OutboxMetrics metrics = new OutboxMetrics(registry, fixture.repository());
+    OutboxPublisher publisher =
+        new DefaultOutboxPublisher(
+            fixture.repository(),
+            OutboxTestSupport.objectMapper(),
+            metrics,
+            io.micrometer.observation.ObservationRegistry.NOOP);
+
+    try {
+      fixture
+          .transactionTemplate()
+          .executeWithoutResult(
+              status -> {
+                publisher.publish(message("rolled-back"));
+                throw new IllegalStateException("business failure");
+              });
+    } catch (IllegalStateException ignored) {
+      // expected
+    }
+
+    assertThat(created(registry)).isZero();
+
+    fixture
+        .transactionTemplate()
+        .executeWithoutResult(status -> publisher.publish(message("kept")));
+
+    assertThat(created(registry)).isEqualTo(1.0);
+  }
+
+  @Test
+  void marksTheCutWhenAnErrorMessageIsTruncated() {
+    UUID id = fixture.publish(message("long-error"));
+    fixture.repository().claimBatch(1, "worker-a");
+
+    fixture.repository().markFailed(id, "worker-a", 5, "x".repeat(5000));
+
+    String lastError = fixture.repository().findById(id).orElseThrow().lastError();
+    assertThat(lastError).hasSize(4000 + "… [truncated]".length());
+    assertThat(lastError).endsWith("… [truncated]");
+  }
+
+  private static double created(SimpleMeterRegistry registry) {
+    return registry.find("outbox.events.created").counters().stream()
+        .mapToDouble(counter -> counter.count())
+        .sum();
   }
 
   @Test
