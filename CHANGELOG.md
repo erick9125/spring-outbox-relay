@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- The library can be published at all. `publishToMavenLocal` failed with *"Publication only
+  contains dependencies and/or constraints without a version"*: every dependency is declared without
+  one because the Spring Boot BOM supplies it through `io.spring.dependency-management`, which is a
+  resolution-time mechanism that writes nothing into the published POM. The publication now writes
+  resolved versions, so a consumer gets a POM it can actually resolve. Nothing had noticed because
+  nothing had ever tried to publish.
+- The published POM no longer carries `spring-boot-dependencies` as an imported BOM. The
+  dependency-management plugin copies it in by default, which nudges a consuming build's Spring Boot
+  versions towards ours; a library has no business doing that.
+- `check` now generates the POM and fails if any dependency lacks a version, so this cannot regress
+  unnoticed again.
+
+### Fixed
+
 - Invalid configuration now fails at startup instead of being silently replaced by a default.
   `batch-size: 0` quietly became 100, so a typo in a deployment behaved like a working
   configuration and the operator had no way to tell their value was ignored.
