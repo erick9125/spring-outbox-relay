@@ -152,10 +152,9 @@ acumulan de forma durable, y el relay y su planificación quedan apagados.
 
 ## Esquema de base de datos
 
-La migración se publica en `classpath:db/outbox`, deliberadamente fuera de la ubicación por
-defecto de Flyway (`classpath:db/migration`): una migración de librería en la ubicación por
-defecto colisionaría con el `V1__…` de tu aplicación y rompería el arranque. Añade la
-ubicación junto a la tuya:
+Las migraciones se publican en `classpath:db/outbox`, fuera de la ubicación por defecto de Flyway
+(`classpath:db/migration`), para que nunca se recojan por accidente. Añade la ubicación junto a la
+tuya:
 
 ```yaml
 spring:
@@ -164,6 +163,12 @@ spring:
       - classpath:db/migration
       - classpath:db/outbox
 ```
+
+Flyway exige que las versiones sean únicas **entre todas las ubicaciones configuradas**, no por
+ubicación, así que las de la librería usan formato de timestamp
+—`V20260101000001__create_outbox_event.sql`— y no pueden colisionar con tus `V1`, `V2`, `V3`
+secuenciales. Aparecen en tu `flyway_schema_history` junto a las tuyas, que es lo correcto: tu base
+de datos es donde se aplicaron.
 
 O crea una tabla equivalente por tu cuenta:
 

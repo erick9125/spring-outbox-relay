@@ -10,8 +10,9 @@ spring:
     password: outbox
   flyway:
     enabled: true
-    # The library ships its schema under classpath:db/outbox so that its migration cannot collide
-    # with the application's own versions in the default classpath:db/migration location.
+    # The library ships its schema under classpath:db/outbox, outside Flyway's default location, so
+    # it is never picked up by accident. Version uniqueness is global across locations, so its
+    # migrations use timestamp-style versions that cannot collide with this app's V1, V2, V3.
     locations:
       - classpath:db/migration
       - classpath:db/outbox

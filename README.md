@@ -150,10 +150,9 @@ its schedule stay off.
 
 ## Database schema
 
-The migration ships under `classpath:db/outbox`, deliberately outside Flyway's default
-`classpath:db/migration` location: a library migration sitting in the default location would
-collide with your application's own `V1__…` and break startup. Add the location alongside
-your own:
+The migrations ship under `classpath:db/outbox`, outside Flyway's default
+`classpath:db/migration`, so they are never picked up by accident. Add the location alongside your
+own:
 
 ```yaml
 spring:
@@ -162,6 +161,11 @@ spring:
       - classpath:db/migration
       - classpath:db/outbox
 ```
+
+Flyway requires migration versions to be unique **across every configured location**, not per
+location, so the library's are timestamp-style — `V20260101000001__create_outbox_event.sql` — and
+cannot collide with your sequential `V1`, `V2`, `V3`. They appear in your `flyway_schema_history`
+alongside your own, which is accurate: your database is where they were applied.
 
 Or create an equivalent table yourself:
 
