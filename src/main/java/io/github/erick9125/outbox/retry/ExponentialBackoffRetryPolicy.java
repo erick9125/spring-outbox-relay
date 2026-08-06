@@ -46,7 +46,7 @@ public final class ExponentialBackoffRetryPolicy implements RetryPolicy {
   @Override
   public RetryDecision evaluate(OutboxEvent event, Throwable failure) {
     if (isPermanent(failure)) {
-      return RetryDecision.fail("permanent publication failure: " + rootMessage(failure));
+      return RetryDecision.fail("permanent publication failure: " + describe(failure));
     }
 
     int nextAttempt = event.attempts() + 1;
@@ -55,12 +55,15 @@ public final class ExponentialBackoffRetryPolicy implements RetryPolicy {
     }
 
     if (!isRetryable(failure)) {
-      return RetryDecision.fail("non-retryable publication failure: " + rootMessage(failure));
+      return RetryDecision.fail("non-retryable publication failure: " + describe(failure));
     }
 
     Duration delay = computeDelay(nextAttempt);
     Instant nextAttemptAt = clock.instant().plus(delay);
-    return RetryDecision.retryAt(nextAttemptAt, "retryable publication failure; delay=" + delay);
+    // The reason lands in last_error, so it has to name what actually failed. Recording only the
+    // delay left an operator looking at a PENDING row with no idea why it was rescheduled.
+    return RetryDecision.retryAt(
+        nextAttemptAt, "retryable publication failure; delay=" + delay + "; " + describe(failure));
   }
 
   Duration computeDelay(int attemptNumber) {
@@ -99,6 +102,24 @@ public final class ExponentialBackoffRetryPolicy implements RetryPolicy {
       current = current.getCause();
     }
     return true;
+  }
+
+  /**
+   * Describes a failure for {@code last_error}, which is the only record an operator has of why a
+   * row is where it is.
+   *
+   * <p>Reporting only the root cause loses the wrapper's message, and the wrapper is often the
+   * informative one — "broker did not acknowledge within 30s" wrapping a bare {@code
+   * TimeoutException}. Reporting only the wrapper loses the opposite case, where the adapter's
+   * generic message wraps the broker's specific one. So both are kept when they differ.
+   */
+  private static String describe(Throwable failure) {
+    String root = rootMessage(failure);
+    String message = failure.getMessage();
+    if (message == null || message.isBlank() || message.equals(root)) {
+      return root;
+    }
+    return message + " (" + root + ")";
   }
 
   private static String rootMessage(Throwable failure) {

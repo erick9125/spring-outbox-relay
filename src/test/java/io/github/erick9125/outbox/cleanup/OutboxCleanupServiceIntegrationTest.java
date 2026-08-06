@@ -58,6 +58,7 @@ class OutboxCleanupServiceIntegrationTest extends AbstractPostgresIntegrationTes
             "cleanup-test",
             Duration.ofSeconds(30),
             500,
+            Duration.ofSeconds(30),
             OutboxProperties.Retry.defaults(),
             new OutboxProperties.Cleanup(false, Duration.ofDays(7), Duration.ofHours(1)));
 
@@ -95,6 +96,7 @@ class OutboxCleanupServiceIntegrationTest extends AbstractPostgresIntegrationTes
         "cleanup-test",
         Duration.ofSeconds(30),
         maintenanceBatchSize,
+        Duration.ofSeconds(30),
         OutboxProperties.Retry.defaults(),
         new OutboxProperties.Cleanup(true, Duration.ofDays(7), Duration.ofHours(1)));
   }

@@ -229,6 +229,7 @@ spring:
       instance-id: order-service-1
       recovery-interval: 1m
       maintenance-batch-size: 500
+      publish-timeout: 30s
       retry:
         initial-delay: 5s
         maximum-delay: 5m
@@ -250,6 +251,7 @@ spring:
 | `spring.outbox.relay.instance-id` | hostname + pid | Identidad del worker en `locked_by` |
 | `spring.outbox.relay.recovery-interval` | `1m` | Espera entre ejecuciones de la recuperación |
 | `spring.outbox.relay.maintenance-batch-size` | `500` | Filas por statement en los jobs de recuperación y limpieza |
+| `spring.outbox.relay.publish-timeout` | `30s` | Plazo para que el lote completo sea confirmado. Mantenerlo por debajo de `lock-timeout` |
 | `spring.outbox.relay.retry.initial-delay` | `5s` | Retraso base del backoff |
 | `spring.outbox.relay.retry.maximum-delay` | `5m` | Tope del backoff |
 | `spring.outbox.relay.cleanup.retention` | `7d` | Retención de filas `PUBLISHED` |
@@ -442,7 +444,7 @@ Más detalle en [docs/failure-scenarios.md](docs/failure-scenarios.md) y
 | `outbox.events.failed` | Fallos permanentes o agotados |
 | `outbox.events.lock.lost` | Claims reclamados por otra instancia a mitad de vuelo |
 | `outbox.events.recovered` | Locks abandonados recuperados |
-| `outbox.publication.duration` | Latencia de publicación |
+| `outbox.publication.duration` | Latencia de confirmación del broker, con tag `result=success|failure` |
 | `outbox.pending.count` | Backlog actual |
 | `outbox.oldest.pending.age` | Antigüedad del pending más viejo |
 

@@ -7,6 +7,8 @@ import io.github.erick9125.outbox.api.OutboxMessage;
 import io.github.erick9125.outbox.api.OutboxPublisher;
 import io.github.erick9125.outbox.broker.MessageBrokerPublisher;
 import io.github.erick9125.outbox.configuration.OutboxProperties;
+import io.github.erick9125.outbox.domain.OutboxEvent;
+import io.github.erick9125.outbox.domain.PublicationResult;
 import io.github.erick9125.outbox.observability.OutboxMetrics;
 import io.github.erick9125.outbox.persistence.JdbcOutboxRepository;
 import io.github.erick9125.outbox.persistence.OutboxRepository;
@@ -19,6 +21,8 @@ import io.micrometer.observation.ObservationRegistry;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Function;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -61,6 +65,7 @@ public final class OutboxTestSupport {
         "test-instance",
         Duration.ofSeconds(30),
         500,
+        Duration.ofSeconds(30),
         new OutboxProperties.Retry(Duration.ofSeconds(5), Duration.ofMinutes(5), 2.0d, 0.0d),
         OutboxProperties.Cleanup.defaults());
   }
@@ -85,8 +90,26 @@ public final class OutboxTestSupport {
         metrics);
   }
 
+  /**
+   * Wraps a synchronous publisher as the async {@link MessageBrokerPublisher} the relay expects.
+   * Throwing from {@code publisher} still surfaces as a failed publication, because the relay
+   * treats an adapter that throws the same as one that returns a failed future.
+   */
+  public static MessageBrokerPublisher sync(Function<OutboxEvent, PublicationResult> publisher) {
+    return event -> CompletableFuture.completedFuture(publisher.apply(event));
+  }
+
   public static OutboxRelay relay(
       Fixture fixture, MessageBrokerPublisher brokerPublisher, String instanceId) {
+    return relayWithPublishTimeout(
+        fixture, brokerPublisher, instanceId, fixture.properties().publishTimeout());
+  }
+
+  public static OutboxRelay relayWithPublishTimeout(
+      Fixture fixture,
+      MessageBrokerPublisher brokerPublisher,
+      String instanceId,
+      Duration publishTimeout) {
     RetryPolicy retryPolicy =
         new ExponentialBackoffRetryPolicy(
             Duration.ofSeconds(5), Duration.ofMinutes(5), 2.0d, 0.0d, Clock.systemUTC());
@@ -100,6 +123,7 @@ public final class OutboxTestSupport {
             instanceId,
             fixture.properties().recoveryInterval(),
             fixture.properties().maintenanceBatchSize(),
+            publishTimeout,
             fixture.properties().retry(),
             fixture.properties().cleanup());
     return new DefaultOutboxRelay(

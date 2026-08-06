@@ -13,9 +13,9 @@ import java.time.Clock;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.errors.InvalidTopicException;
 import org.apache.kafka.common.errors.RecordTooLargeException;
@@ -45,21 +45,26 @@ public final class KafkaOutboxPublisher implements MessageBrokerPublisher {
 
   private final KafkaTemplate<String, String> kafkaTemplate;
   private final Clock clock;
-  private final long sendTimeoutSeconds;
 
   public KafkaOutboxPublisher(KafkaTemplate<String, String> kafkaTemplate) {
-    this(kafkaTemplate, Clock.systemUTC(), 30L);
+    this(kafkaTemplate, Clock.systemUTC());
   }
 
-  public KafkaOutboxPublisher(
-      KafkaTemplate<String, String> kafkaTemplate, Clock clock, long sendTimeoutSeconds) {
+  public KafkaOutboxPublisher(KafkaTemplate<String, String> kafkaTemplate, Clock clock) {
     this.kafkaTemplate = Objects.requireNonNull(kafkaTemplate, "kafkaTemplate must not be null");
     this.clock = Objects.requireNonNull(clock, "clock must not be null");
-    this.sendTimeoutSeconds = sendTimeoutSeconds;
   }
 
+  /**
+   * Hands the record to the producer and maps its future, without waiting for the acknowledgement.
+   *
+   * <p>The producer batches concurrent sends itself, so handing off the whole outbox batch before
+   * awaiting any of it is what lets one poll cost roughly one round trip instead of one per event.
+   * The relay owns the deadline; this adapter only translates Kafka's failures into the retryable
+   * and permanent categories the retry policy understands.
+   */
   @Override
-  public PublicationResult publish(OutboxEvent event) {
+  public CompletableFuture<PublicationResult> publish(OutboxEvent event) {
     ProducerRecord<String, String> record =
         new ProducerRecord<>(event.destination(), event.partitionKey(), event.payload());
 
@@ -71,24 +76,30 @@ public final class KafkaOutboxPublisher implements MessageBrokerPublisher {
     addHeader(record, "aggregate-type", event.aggregateType());
     addHeader(record, "aggregate-id", event.aggregateId());
 
+    CompletableFuture<SendResult<String, String>> sent;
     try {
-      SendResult<String, String> result =
-          kafkaTemplate.send(record).get(sendTimeoutSeconds, TimeUnit.SECONDS);
-      String brokerMessageId =
-          result.getRecordMetadata().topic()
-              + "-"
-              + result.getRecordMetadata().partition()
-              + "-"
-              + result.getRecordMetadata().offset();
-      return new PublicationResult(brokerMessageId, clock.instant());
-    } catch (TimeoutException exception) {
-      throw new RetryablePublicationException("Timed out waiting for Kafka ack", exception);
-    } catch (InterruptedException exception) {
-      Thread.currentThread().interrupt();
-      throw new RetryablePublicationException("Interrupted while publishing to Kafka", exception);
-    } catch (ExecutionException exception) {
-      throw mapExecutionFailure(exception);
+      sent = kafkaTemplate.send(record);
+    } catch (RuntimeException exception) {
+      // send() itself can fail before anything is queued — a closed producer, or a full buffer once
+      // max.block.ms elapses.
+      return CompletableFuture.failedFuture(mapFailure(exception));
     }
+
+    return sent.handle(
+        (result, failure) -> {
+          if (failure != null) {
+            throw mapFailure(failure);
+          }
+          return new PublicationResult(brokerMessageId(result), clock.instant());
+        });
+  }
+
+  private static String brokerMessageId(SendResult<String, String> result) {
+    return result.getRecordMetadata().topic()
+        + "-"
+        + result.getRecordMetadata().partition()
+        + "-"
+        + result.getRecordMetadata().offset();
   }
 
   /**
@@ -128,8 +139,19 @@ public final class KafkaOutboxPublisher implements MessageBrokerPublisher {
     }
   }
 
-  private static RuntimeException mapExecutionFailure(ExecutionException exception) {
-    Throwable cause = exception.getCause() == null ? exception : exception.getCause();
+  /**
+   * Classifies a producer failure. Unwraps the {@code CompletionException} and {@code
+   * KafkaProducerException} layers the client adds so the decision is made on the real cause.
+   */
+  private static RuntimeException mapFailure(Throwable failure) {
+    Throwable cause = failure;
+    while ((cause instanceof CompletionException || cause instanceof ExecutionException)
+        && cause.getCause() != null) {
+      cause = cause.getCause();
+    }
+    if (cause instanceof PermanentPublicationException permanent) {
+      return permanent;
+    }
     if (isPermanent(cause)) {
       return new PermanentPublicationException("Permanent Kafka publication failure", cause);
     }

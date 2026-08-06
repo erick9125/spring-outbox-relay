@@ -36,7 +36,7 @@ class KafkaOutboxPublisherTest {
   private final List<ProducerRecord<String, String>> sent = new ArrayList<>();
   private final KafkaOutboxPublisher publisher =
       new KafkaOutboxPublisher(
-          new CapturingKafkaTemplate(sent), Clock.fixed(Instant.EPOCH, ZoneOffset.UTC), 5L);
+          new CapturingKafkaTemplate(sent), Clock.fixed(Instant.EPOCH, ZoneOffset.UTC));
 
   @Test
   void propagatesTheHeadersTheCallerAttachedToTheMessage() {
@@ -96,7 +96,7 @@ class KafkaOutboxPublisherTest {
 
   @Test
   void usesThePartitionKeyAsTheRecordKeyAndReportsTheBrokerOffset() {
-    PublicationResult result = publisher.publish(event("{}"));
+    PublicationResult result = publisher.publish(event("{}")).join();
 
     assertThat(sent.get(0).key()).isEqualTo("order-1");
     assertThat(sent.get(0).topic()).isEqualTo("orders.events");
