@@ -28,6 +28,13 @@ dependencyManagement {
     imports {
         mavenBom("org.springframework.boot:spring-boot-dependencies:3.5.4")
     }
+    // The BOM is for resolving our own dependencies, not something to hand to consumers. Left on,
+    // the plugin copies it into the published POM's dependencyManagement, which nudges a consuming
+    // build's Spring Boot versions towards ours. The publication writes resolved versions on each
+    // dependency instead, so nothing is lost by leaving it out.
+    generatedPomCustomization {
+        enabled(false)
+    }
 }
 
 dependencies {
@@ -125,14 +132,63 @@ checkstyle {
     configFile = file("config/checkstyle/checkstyle.xml")
 }
 
+// Publishing was broken for the whole life of the project and nothing noticed, because nothing ever
+// tried to publish. `check` now generates the POM and asserts every dependency carries a version:
+// without one the publication is rejected outright, and a forced publish hands consumers a POM they
+// cannot resolve.
+val verifyPublishedPom by tasks.registering {
+    description = "Fails if the published POM would declare a dependency without a version"
+    group = "verification"
+    dependsOn(tasks.named("generatePomFileForMavenJavaPublication"))
+
+    val pomFile = layout.buildDirectory.file("publications/mavenJava/pom-default.xml")
+    inputs.file(pomFile)
+    outputs.upToDateWhen { true }
+
+    doLast {
+        val pom = pomFile.get().asFile.readText()
+        val unversioned =
+            pom
+                .split("<dependency>")
+                .drop(1)
+                .map { it.substringBefore("</dependency>") }
+                .filterNot { it.contains("<version>") }
+                .map { block ->
+                    block.substringAfter("<artifactId>").substringBefore("</artifactId>")
+                }
+
+        if (unversioned.isNotEmpty()) {
+            throw GradleException(
+                "The published POM declares dependencies without a version: $unversioned. " +
+                    "Consumers would not be able to resolve them.",
+            )
+        }
+    }
+}
+
 tasks.named("check") {
-    dependsOn("spotlessCheck")
+    dependsOn("spotlessCheck", verifyPublishedPom)
 }
 
 publishing {
     publications {
         create<MavenPublication>("mavenJava") {
             from(components["java"])
+
+            // Dependencies are declared without versions because the Spring Boot BOM supplies them
+            // through io.spring.dependency-management — but that is a resolution-time mechanism and
+            // writes nothing into the published POM. Without this, publishing fails outright
+            // ("Publication only contains dependencies without a version"), and a forced publish
+            // would hand consumers a POM they cannot resolve.
+            //
+            // Resolved versions are written instead of exporting the BOM as a platform: making
+            // consumers inherit all of spring-boot-dependencies would force their own Spring Boot
+            // version to align with ours.
+            versionMapping {
+                usage("java-api") { fromResolutionResult() }
+                usage("java-runtime") { fromResolutionResult() }
+            }
+
             pom {
                 name.set("Spring Outbox Relay")
                 description.set(project.description)
