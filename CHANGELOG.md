@@ -4,7 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [0.1.0-SNAPSHOT] - unreleased
 
+### Fixed
+
+- A poison event no longer loops forever. An event whose processing killed its worker was handed
+  back to `PENDING` by recovery with nothing incremented, claimed again, and killed the next worker
+  too. Migration `V2` adds a `recoveries` column, bounded by the new
+  `spring.outbox.relay.max-recoveries` (default 3); past the budget the event becomes `FAILED` with
+  `last_error` set and is counted in the new `outbox.events.recovery.exhausted` metric.
+  The counter is separate from `attempts` deliberately: deploys interrupt in-flight publications,
+  so charging recoveries to the publication retry budget would send healthy events to `FAILED`
+  after a few releases without a single failed publication.
+
 ### Changed
+
+- Migration `V2` replaces the indexes with partial ones matching what the jobs query.
+  `idx_outbox_event_polling` led with `status`, which made `available_at` a range predicate and left
+  the polling query sorting on every run, and it indexed every row including the `PUBLISHED` ones
+  that dominate the table. The cleanup job's `status = 'PUBLISHED' AND published_at < ?` had no
+  usable index at all and scanned every published row.
 
 - The jobs run on a thread pool the library owns, one thread each, instead of on `@Scheduled`
   methods. The library no longer turns on `@EnableScheduling` for the whole host application, and

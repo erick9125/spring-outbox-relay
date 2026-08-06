@@ -118,6 +118,7 @@ class KafkaOutboxPublisherTest {
         OutboxStatus.PROCESSING,
         0,
         5,
+        0,
         Instant.EPOCH,
         Instant.EPOCH,
         Instant.EPOCH,

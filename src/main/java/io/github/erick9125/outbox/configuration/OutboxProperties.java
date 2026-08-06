@@ -14,6 +14,7 @@ public record OutboxProperties(
     String instanceId,
     @DefaultValue("1m") Duration recoveryInterval,
     @DefaultValue("500") int maintenanceBatchSize,
+    @DefaultValue("3") int maxRecoveries,
     @DefaultValue("30s") Duration publishTimeout,
     @DefaultValue("10s") Duration backlogMetricsInterval,
     @DefaultValue("30s") Duration shutdownTimeout,
@@ -29,6 +30,11 @@ public record OutboxProperties(
     }
     if (maintenanceBatchSize < 1) {
       maintenanceBatchSize = 500;
+    }
+    // Deploys interrupt in-flight publications, so a handful of recoveries is normal operation and
+    // the budget only has to be tight enough to catch an event that keeps killing its worker.
+    if (maxRecoveries < 1) {
+      maxRecoveries = 3;
     }
     // A batch is awaited against this as a single deadline, so it also bounds how long a poll can
     // hold its claims. Keeping it below lock-timeout is what stops the recovery job from reclaiming
@@ -62,6 +68,7 @@ public record OutboxProperties(
         null,
         Duration.ofMinutes(1),
         500,
+        3,
         Duration.ofSeconds(30),
         Duration.ofSeconds(10),
         Duration.ofSeconds(30),

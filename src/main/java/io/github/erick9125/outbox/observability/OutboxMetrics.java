@@ -99,6 +99,15 @@ public final class OutboxMetrics {
   }
 
   /**
+   * Events retired because their claim was abandoned more times than {@code max-recoveries} allows.
+   * Any non-zero value is worth an alert: something about those events keeps outliving the lock
+   * timeout, and they are no longer being delivered.
+   */
+  public void incrementRecoveryExhausted(int count) {
+    Counter.builder("outbox.events.recovery.exhausted").register(meterRegistry).increment(count);
+  }
+
+  /**
    * Records how long the broker took to acknowledge one event.
    *
    * <p>Tagged with the outcome so that failures — a 30 second timeout, most of all — do not sit in

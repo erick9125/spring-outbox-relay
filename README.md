@@ -179,6 +179,7 @@ CREATE TABLE outbox_event (
     status VARCHAR(30) NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
     max_attempts INTEGER NOT NULL DEFAULT 5,
+    recoveries INTEGER NOT NULL DEFAULT 0,
     occurred_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     available_at TIMESTAMPTZ NOT NULL,
@@ -188,11 +189,16 @@ CREATE TABLE outbox_event (
     last_error TEXT
 );
 
-CREATE INDEX idx_outbox_event_polling
-    ON outbox_event (status, available_at, created_at);
+CREATE INDEX idx_outbox_event_pending
+    ON outbox_event (available_at, created_at)
+    WHERE status = 'PENDING';
 
-CREATE INDEX idx_outbox_event_recovery
-    ON outbox_event (status, locked_at)
+CREATE INDEX idx_outbox_event_published
+    ON outbox_event (published_at)
+    WHERE status = 'PUBLISHED';
+
+CREATE INDEX idx_outbox_event_processing
+    ON outbox_event (locked_at)
     WHERE status = 'PROCESSING';
 ```
 
@@ -227,6 +233,7 @@ spring:
       instance-id: order-service-1
       recovery-interval: 1m
       maintenance-batch-size: 500
+      max-recoveries: 3
       publish-timeout: 30s
       backlog-metrics-interval: 10s
       shutdown-timeout: 30s
@@ -251,6 +258,7 @@ spring:
 | `spring.outbox.relay.instance-id` | hostname + pid | Worker identity stored in `locked_by` |
 | `spring.outbox.relay.recovery-interval` | `1m` | Delay between recovery runs |
 | `spring.outbox.relay.maintenance-batch-size` | `500` | Rows per statement in the recovery and cleanup jobs |
+| `spring.outbox.relay.max-recoveries` | `3` | Times a claim may be recovered before the event is failed |
 | `spring.outbox.relay.publish-timeout` | `30s` | Deadline for a whole batch to be acknowledged. Keep it below `lock-timeout` |
 | `spring.outbox.relay.backlog-metrics-interval` | `10s` | How often the backlog gauges are refreshed |
 | `spring.outbox.relay.shutdown-timeout` | `30s` | How long shutdown waits for the run in progress |
@@ -451,6 +459,7 @@ More detail: [docs/failure-scenarios.md](docs/failure-scenarios.md) and
 | `outbox.events.failed` | Permanent / exhausted failures |
 | `outbox.events.lock.lost` | Claims reclaimed by another instance mid-flight |
 | `outbox.events.recovered` | Abandoned locks recovered |
+| `outbox.events.recovery.exhausted` | Events failed after too many abandoned claims |
 | `outbox.publication.duration` | Broker acknowledgement latency, tagged `result=success|failure` |
 | `outbox.pending.count` | Current backlog |
 | `outbox.oldest.pending.age` | Age of the oldest pending event |

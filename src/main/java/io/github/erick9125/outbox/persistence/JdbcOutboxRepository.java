@@ -226,19 +226,21 @@ public final class JdbcOutboxRepository implements OutboxRepository {
   }
 
   @Override
-  public int recoverAbandoned(Instant lockedBefore, int limit) {
+  public int recoverAbandoned(Instant lockedBefore, int maxRecoveries, int limit) {
     return jdbcTemplate.update(
         """
                 UPDATE outbox_event
                 SET status = ?,
                     locked_at = NULL,
                     locked_by = NULL,
-                    available_at = ?
+                    available_at = ?,
+                    recoveries = recoveries + 1
                 WHERE id IN (
                     SELECT id
                     FROM outbox_event
                     WHERE status = ?
                       AND locked_at < ?
+                      AND recoveries < ?
                     ORDER BY locked_at
                     LIMIT ?
                 )
@@ -247,6 +249,34 @@ public final class JdbcOutboxRepository implements OutboxRepository {
         Timestamp.from(clock.instant()),
         OutboxStatus.PROCESSING.name(),
         Timestamp.from(lockedBefore),
+        maxRecoveries,
+        limit);
+  }
+
+  @Override
+  public int failExhaustedRecoveries(Instant lockedBefore, int maxRecoveries, int limit) {
+    return jdbcTemplate.update(
+        """
+                UPDATE outbox_event
+                SET status = ?,
+                    locked_at = NULL,
+                    locked_by = NULL,
+                    last_error = ?
+                WHERE id IN (
+                    SELECT id
+                    FROM outbox_event
+                    WHERE status = ?
+                      AND locked_at < ?
+                      AND recoveries >= ?
+                    ORDER BY locked_at
+                    LIMIT ?
+                )
+                """,
+        OutboxStatus.FAILED.name(),
+        "recovery budget exhausted after " + maxRecoveries + " abandoned claims",
+        OutboxStatus.PROCESSING.name(),
+        Timestamp.from(lockedBefore),
+        maxRecoveries,
         limit);
   }
 
@@ -334,6 +364,7 @@ public final class JdbcOutboxRepository implements OutboxRepository {
         OutboxStatus.valueOf(rs.getString("status")),
         rs.getInt("attempts"),
         rs.getInt("max_attempts"),
+        rs.getInt("recoveries"),
         rs.getTimestamp("occurred_at").toInstant(),
         rs.getTimestamp("created_at").toInstant(),
         rs.getTimestamp("available_at").toInstant(),

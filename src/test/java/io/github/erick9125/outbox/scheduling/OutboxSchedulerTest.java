@@ -7,6 +7,7 @@ import io.github.erick9125.outbox.configuration.OutboxProperties;
 import io.github.erick9125.outbox.domain.RelayResult;
 import io.github.erick9125.outbox.observability.OutboxMetrics;
 import io.github.erick9125.outbox.persistence.OutboxRepository;
+import io.github.erick9125.outbox.support.OutboxTestSupport;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
 import java.time.Instant;
@@ -140,20 +141,15 @@ class OutboxSchedulerTest {
   }
 
   private static OutboxProperties properties(Duration interval) {
-    return new OutboxProperties(
-        true,
-        100,
-        interval,
-        Duration.ofMinutes(5),
-        5,
-        "scheduler-test",
-        interval,
-        500,
-        Duration.ofSeconds(30),
-        interval,
-        Duration.ofSeconds(5),
-        OutboxProperties.Retry.defaults(),
-        new OutboxProperties.Cleanup(true, Duration.ofDays(7), interval));
+    return OutboxTestSupport.props()
+        .batchSize(100)
+        .pollInterval(interval)
+        .instanceId("scheduler-test")
+        .recoveryInterval(interval)
+        .backlogMetricsInterval(interval)
+        .shutdownTimeout(Duration.ofSeconds(5))
+        .cleanup(new OutboxProperties.Cleanup(true, Duration.ofDays(7), interval))
+        .build();
   }
 
   /** Records how often the backlog gauges are refreshed, without touching a database. */
@@ -194,7 +190,12 @@ class OutboxSchedulerTest {
     }
 
     @Override
-    public int recoverAbandoned(Instant lockedBefore, int limit) {
+    public int recoverAbandoned(Instant lockedBefore, int maxRecoveries, int limit) {
+      return 0;
+    }
+
+    @Override
+    public int failExhaustedRecoveries(Instant lockedBefore, int maxRecoveries, int limit) {
       return 0;
     }
 

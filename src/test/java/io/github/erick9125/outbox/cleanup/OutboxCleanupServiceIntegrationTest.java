@@ -49,20 +49,10 @@ class OutboxCleanupServiceIntegrationTest extends AbstractPostgresIntegrationTes
     publishAndMarkPublished(Duration.ofDays(30));
 
     OutboxProperties disabled =
-        new OutboxProperties(
-            true,
-            50,
-            Duration.ofMillis(100),
-            Duration.ofMinutes(5),
-            5,
-            "cleanup-test",
-            Duration.ofSeconds(30),
-            500,
-            Duration.ofSeconds(30),
-            Duration.ofSeconds(10),
-            Duration.ofSeconds(30),
-            OutboxProperties.Retry.defaults(),
-            new OutboxProperties.Cleanup(false, Duration.ofDays(7), Duration.ofHours(1)));
+        OutboxTestSupport.props()
+            .instanceId("cleanup-test")
+            .cleanup(new OutboxProperties.Cleanup(false, Duration.ofDays(7), Duration.ofHours(1)))
+            .build();
 
     assertThat(
             new DefaultOutboxCleanupService(fixture.repository(), disabled)
@@ -89,20 +79,10 @@ class OutboxCleanupServiceIntegrationTest extends AbstractPostgresIntegrationTes
   }
 
   private OutboxProperties propertiesWithBatchSize(int maintenanceBatchSize) {
-    return new OutboxProperties(
-        true,
-        50,
-        Duration.ofMillis(100),
-        Duration.ofMinutes(5),
-        5,
-        "cleanup-test",
-        Duration.ofSeconds(30),
-        maintenanceBatchSize,
-        Duration.ofSeconds(30),
-        Duration.ofSeconds(10),
-        Duration.ofSeconds(30),
-        OutboxProperties.Retry.defaults(),
-        new OutboxProperties.Cleanup(true, Duration.ofDays(7), Duration.ofHours(1)));
+    return OutboxTestSupport.props()
+        .instanceId("cleanup-test")
+        .maintenanceBatchSize(maintenanceBatchSize)
+        .build();
   }
 
   private UUID publishAndMarkPublished(Duration publishedAgo) {

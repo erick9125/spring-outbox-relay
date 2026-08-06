@@ -55,6 +55,12 @@
       "defaultValue": 500
     },
     {
+      "name": "spring.outbox.relay.max-recoveries",
+      "type": "java.lang.Integer",
+      "description": "How many times an abandoned claim may be recovered before the event is marked FAILED. Counted separately from attempts, so deploys interrupting in-flight publications do not spend an event's publication retry budget.",
+      "defaultValue": 3
+    },
+    {
       "name": "spring.outbox.relay.publish-timeout",
       "type": "java.time.Duration",
       "description": "Deadline for a whole claimed batch to be acknowledged by the broker. Also bounds how long a poll holds its claims, so keep it below lock-timeout to stop the recovery job from reclaiming rows that are still in flight.",

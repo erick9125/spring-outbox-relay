@@ -12,6 +12,7 @@ import io.github.erick9125.outbox.support.OutboxTestSupport.Fixture;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
@@ -78,6 +79,57 @@ class JdbcOutboxRepositoryIntegrationTest extends AbstractPostgresIntegrationTes
   }
 
   @Test
+  void appliesTheIndexesTheJobsActuallyQueryOn() {
+    List<String> indexes =
+        fixture
+            .jdbcTemplate()
+            .queryForList(
+                "SELECT indexname FROM pg_indexes WHERE tablename = 'outbox_event' ORDER BY 1",
+                String.class);
+
+    // Partial indexes covering exactly the rows each job looks at. The original single index led on
+    // status, which left the polling query sorting on every run, and offered the cleanup job
+    // nothing
+    // to seek on at all.
+    assertThat(indexes)
+        .contains(
+            "idx_outbox_event_pending", "idx_outbox_event_published", "idx_outbox_event_processing")
+        .doesNotContain("idx_outbox_event_polling", "idx_outbox_event_recovery");
+  }
+
+  @Test
+  void satisfiesThePollingOrderFromTheIndexWithoutSorting() {
+    fixture.publish(message("explain-me"));
+
+    // Sequential scans are disabled for this statement so the assertion is about the index's shape
+    // rather than about what the planner picks on a table with one row. The point of leading the
+    // index with available_at is that the polling query's ORDER BY comes out of the index: the old
+    // index led with status, which made available_at a range predicate and forced a sort every
+    // poll.
+    String plan =
+        fixture
+            .transactionTemplate()
+            .execute(
+                status -> {
+                  fixture.jdbcTemplate().execute("SET LOCAL enable_seqscan = off");
+                  return String.join(
+                      "\n",
+                      fixture
+                          .jdbcTemplate()
+                          .queryForList(
+                              """
+                              EXPLAIN SELECT id FROM outbox_event
+                              WHERE status = 'PENDING' AND available_at <= now()
+                              ORDER BY available_at, created_at
+                              """,
+                              String.class));
+                });
+
+    assertThat(plan).contains("idx_outbox_event_pending");
+    assertThat(plan).doesNotContain("Sort Key");
+  }
+
+  @Test
   void boundsRecoveryAndCleanupToTheRequestedLimit() {
     // The limit is what keeps a huge backlog from becoming one long-running statement holding locks
     // over the whole set. Asserting on the drain loop's total would not catch its absence, so this
@@ -93,10 +145,10 @@ class JdbcOutboxRepositoryIntegrationTest extends AbstractPostgresIntegrationTes
             Timestamp.from(Instant.now().minus(Duration.ofMinutes(10))));
 
     Instant lockedBefore = Instant.now().minus(Duration.ofMinutes(1));
-    assertThat(fixture.repository().recoverAbandoned(lockedBefore, 2)).isEqualTo(2);
-    assertThat(fixture.repository().recoverAbandoned(lockedBefore, 2)).isEqualTo(2);
-    assertThat(fixture.repository().recoverAbandoned(lockedBefore, 2)).isEqualTo(1);
-    assertThat(fixture.repository().recoverAbandoned(lockedBefore, 2)).isZero();
+    assertThat(fixture.repository().recoverAbandoned(lockedBefore, 3, 2)).isEqualTo(2);
+    assertThat(fixture.repository().recoverAbandoned(lockedBefore, 3, 2)).isEqualTo(2);
+    assertThat(fixture.repository().recoverAbandoned(lockedBefore, 3, 2)).isEqualTo(1);
+    assertThat(fixture.repository().recoverAbandoned(lockedBefore, 3, 2)).isZero();
 
     fixture.repository().claimBatch(10, "worker-a");
     fixture

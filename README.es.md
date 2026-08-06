@@ -181,6 +181,7 @@ CREATE TABLE outbox_event (
     status VARCHAR(30) NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
     max_attempts INTEGER NOT NULL DEFAULT 5,
+    recoveries INTEGER NOT NULL DEFAULT 0,
     occurred_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     available_at TIMESTAMPTZ NOT NULL,
@@ -190,11 +191,16 @@ CREATE TABLE outbox_event (
     last_error TEXT
 );
 
-CREATE INDEX idx_outbox_event_polling
-    ON outbox_event (status, available_at, created_at);
+CREATE INDEX idx_outbox_event_pending
+    ON outbox_event (available_at, created_at)
+    WHERE status = 'PENDING';
 
-CREATE INDEX idx_outbox_event_recovery
-    ON outbox_event (status, locked_at)
+CREATE INDEX idx_outbox_event_published
+    ON outbox_event (published_at)
+    WHERE status = 'PUBLISHED';
+
+CREATE INDEX idx_outbox_event_processing
+    ON outbox_event (locked_at)
     WHERE status = 'PROCESSING';
 ```
 
@@ -229,6 +235,7 @@ spring:
       instance-id: order-service-1
       recovery-interval: 1m
       maintenance-batch-size: 500
+      max-recoveries: 3
       publish-timeout: 30s
       backlog-metrics-interval: 10s
       shutdown-timeout: 30s
@@ -253,6 +260,7 @@ spring:
 | `spring.outbox.relay.instance-id` | hostname + pid | Identidad del worker en `locked_by` |
 | `spring.outbox.relay.recovery-interval` | `1m` | Espera entre ejecuciones de la recuperación |
 | `spring.outbox.relay.maintenance-batch-size` | `500` | Filas por statement en los jobs de recuperación y limpieza |
+| `spring.outbox.relay.max-recoveries` | `3` | Veces que un claim puede recuperarse antes de marcar el evento FAILED |
 | `spring.outbox.relay.publish-timeout` | `30s` | Plazo para que el lote completo sea confirmado. Mantenerlo por debajo de `lock-timeout` |
 | `spring.outbox.relay.backlog-metrics-interval` | `10s` | Cada cuánto se refrescan los gauges de backlog |
 | `spring.outbox.relay.shutdown-timeout` | `30s` | Cuánto espera el apagado a la ejecución en curso |
@@ -455,6 +463,7 @@ Más detalle en [docs/failure-scenarios.md](docs/failure-scenarios.md) y
 | `outbox.events.failed` | Fallos permanentes o agotados |
 | `outbox.events.lock.lost` | Claims reclamados por otra instancia a mitad de vuelo |
 | `outbox.events.recovered` | Locks abandonados recuperados |
+| `outbox.events.recovery.exhausted` | Eventos marcados FAILED tras demasiados claims abandonados |
 | `outbox.publication.duration` | Latencia de confirmación del broker, con tag `result=success|failure` |
 | `outbox.pending.count` | Backlog actual |
 | `outbox.oldest.pending.age` | Antigüedad del pending más viejo |

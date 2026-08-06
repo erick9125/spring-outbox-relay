@@ -6,6 +6,7 @@ import io.github.erick9125.outbox.persistence.OutboxRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.function.IntUnaryOperator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,18 +46,40 @@ public final class DefaultOutboxRecoveryService implements OutboxRecoveryService
   public int recoverAbandonedEvents() {
     Instant lockedBefore = clock.instant().minus(properties.lockTimeout());
     int batchSize = properties.maintenanceBatchSize();
-    int total = 0;
+    int maxRecoveries = properties.maxRecoveries();
 
-    int recovered;
-    do {
-      recovered = repository.recoverAbandoned(lockedBefore, batchSize);
-      total += recovered;
-    } while (recovered == batchSize);
+    // Retire the events that have used up their recovery budget first, so they are out of the way
+    // before the next statement hands anything back to a worker.
+    int exhausted =
+        drain(
+            limit -> repository.failExhaustedRecoveries(lockedBefore, maxRecoveries, limit),
+            batchSize);
+    int recovered =
+        drain(limit -> repository.recoverAbandoned(lockedBefore, maxRecoveries, limit), batchSize);
 
-    if (total > 0) {
-      metrics.incrementRecovered(total);
-      log.info("Recovered {} abandoned outbox events locked before {}", total, lockedBefore);
+    if (exhausted > 0) {
+      metrics.incrementRecoveryExhausted(exhausted);
+      log.warn(
+          "Marked {} outbox events FAILED after {} abandoned claims each; their processing keeps "
+              + "outliving the lock timeout, so inspect them before requeueing",
+          exhausted,
+          maxRecoveries);
     }
+    if (recovered > 0) {
+      metrics.incrementRecovered(recovered);
+      log.info("Recovered {} abandoned outbox events locked before {}", recovered, lockedBefore);
+    }
+    return recovered;
+  }
+
+  /** Repeats a bounded statement until it comes back short, which means there is nothing left. */
+  private static int drain(IntUnaryOperator statement, int batchSize) {
+    int total = 0;
+    int affected;
+    do {
+      affected = statement.applyAsInt(batchSize);
+      total += affected;
+    } while (affected == batchSize);
     return total;
   }
 }
