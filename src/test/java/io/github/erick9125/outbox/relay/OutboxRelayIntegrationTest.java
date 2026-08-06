@@ -19,8 +19,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,6 +39,16 @@ class OutboxRelayIntegrationTest extends AbstractPostgresIntegrationTest {
   void setUp() {
     fixture = OutboxTestSupport.fixture(POSTGRES);
     fixture.jdbcTemplate().update("DELETE FROM outbox_event");
+  }
+
+  private static OutboxMessage message(String aggregateId) {
+    return OutboxMessage.builder()
+        .aggregateType("ORDER")
+        .aggregateId(aggregateId)
+        .eventType("order.created")
+        .destination("orders.events")
+        .payload(Map.of("ok", true))
+        .build();
   }
 
   @Test
@@ -75,12 +90,13 @@ class OutboxRelayIntegrationTest extends AbstractPostgresIntegrationTest {
     List<UUID> duplicates = new CopyOnWriteArrayList<>();
 
     MessageBrokerPublisher publisher =
-        event -> {
-          if (!claimedIds.add(event.id())) {
-            duplicates.add(event.id());
-          }
-          return new PublicationResult("msg-" + event.id(), Instant.now());
-        };
+        OutboxTestSupport.sync(
+            event -> {
+              if (!claimedIds.add(event.id())) {
+                duplicates.add(event.id());
+              }
+              return new PublicationResult("msg-" + event.id(), Instant.now());
+            });
 
     OutboxRelay workerA = OutboxTestSupport.relay(fixture, publisher, "worker-a");
     OutboxRelay workerB = OutboxTestSupport.relay(fixture, publisher, "worker-b");
@@ -106,6 +122,82 @@ class OutboxRelayIntegrationTest extends AbstractPostgresIntegrationTest {
   }
 
   @Test
+  void handsTheWholeBatchToTheBrokerBeforeAwaitingAnyOfIt() {
+    // The relay used to await each acknowledgement before sending the next, so a batch cost the sum
+    // of its latencies. Every event must now be in flight before the first one is settled: this
+    // publisher refuses to complete until it has seen all five.
+    int batch = 5;
+    IntStream.range(0, batch).forEach(i -> fixture.publish(message("parallel-" + i)));
+
+    CountDownLatch allSent = new CountDownLatch(batch);
+    ExecutorService acks = Executors.newFixedThreadPool(batch);
+    try {
+      OutboxRelay relay =
+          OutboxTestSupport.relay(
+              fixture,
+              event -> {
+                allSent.countDown();
+                return CompletableFuture.supplyAsync(
+                    () -> {
+                      try {
+                        // Deadlocks unless the other four were handed over first.
+                        if (!allSent.await(10, TimeUnit.SECONDS)) {
+                          throw new IllegalStateException("batch was published serially");
+                        }
+                      } catch (InterruptedException exception) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException(exception);
+                      }
+                      return new PublicationResult("broker-" + event.id(), Instant.now());
+                    },
+                    acks);
+              },
+              "worker-a");
+
+      RelayResult result = relay.relayBatch();
+
+      assertThat(result.claimed()).isEqualTo(batch);
+      assertThat(result.published()).isEqualTo(batch);
+      assertThat(result.failed()).isZero();
+      assertThat(result.rescheduled()).isZero();
+    } finally {
+      acks.shutdownNow();
+    }
+  }
+
+  @Test
+  void appliesThePublishTimeoutToTheBatchRatherThanToEachEvent() {
+    // A broker that never acknowledges: with a per-event timeout, three events would take three
+    // timeouts. One deadline for the whole batch keeps a stuck broker from holding the claims for
+    // longer than publish-timeout, which is what let lock-timeout elapse mid-batch.
+    IntStream.range(0, 3).forEach(i -> fixture.publish(message("stuck-" + i)));
+
+    OutboxRelay relay =
+        OutboxTestSupport.relayWithPublishTimeout(
+            fixture, event -> new CompletableFuture<>(), "worker-a", Duration.ofMillis(300));
+
+    Instant start = Instant.now();
+    RelayResult result = relay.relayBatch();
+    Duration elapsed = Duration.between(start, Instant.now());
+
+    assertThat(result.claimed()).isEqualTo(3);
+    assertThat(result.rescheduled()).isEqualTo(3);
+    assertThat(result.published()).isZero();
+    // Three per-event timeouts would be 900ms or more; one shared deadline stays near 300ms.
+    assertThat(elapsed).isLessThan(Duration.ofMillis(800));
+
+    // A timeout is retryable: the rows go back to PENDING with the reason recorded, because the
+    // send
+    // may still land and the consumer deduplicates.
+    assertThat(fixture.repository().countPending()).isEqualTo(3);
+    assertThat(
+            fixture
+                .jdbcTemplate()
+                .queryForObject("SELECT last_error FROM outbox_event LIMIT 1", String.class))
+        .contains("did not acknowledge");
+  }
+
+  @Test
   void publishesAndMarksPublished() {
     UUID id =
         fixture.publish(
@@ -122,10 +214,11 @@ class OutboxRelayIntegrationTest extends AbstractPostgresIntegrationTest {
     OutboxRelay relay =
         OutboxTestSupport.relay(
             fixture,
-            event -> {
-              publishedEvents.add(event);
-              return new PublicationResult("broker-1", Instant.now());
-            },
+            OutboxTestSupport.sync(
+                event -> {
+                  publishedEvents.add(event);
+                  return new PublicationResult("broker-1", Instant.now());
+                }),
             "worker-a");
 
     RelayResult result = relay.relayBatch();
@@ -161,12 +254,13 @@ class OutboxRelayIntegrationTest extends AbstractPostgresIntegrationTest {
     OutboxRelay relay =
         OutboxTestSupport.relay(
             fixture,
-            event -> {
-              if ("retryable".equals(event.aggregateId())) {
-                throw new RetryablePublicationException("broker unavailable");
-              }
-              throw new PermanentPublicationException("invalid destination");
-            },
+            OutboxTestSupport.sync(
+                event -> {
+                  if ("retryable".equals(event.aggregateId())) {
+                    throw new RetryablePublicationException("broker unavailable");
+                  }
+                  throw new PermanentPublicationException("invalid destination");
+                }),
             "worker-a");
 
     RelayResult result = relay.relayBatch();
@@ -250,7 +344,9 @@ class OutboxRelayIntegrationTest extends AbstractPostgresIntegrationTest {
     // worker-b now owns the row and publishes it.
     OutboxRelay workerB =
         OutboxTestSupport.relay(
-            fixture, event -> new PublicationResult("broker-b", Instant.now()), "worker-b");
+            fixture,
+            OutboxTestSupport.sync(event -> new PublicationResult("broker-b", Instant.now())),
+            "worker-b");
     assertThat(workerB.relayBatch().published()).isEqualTo(1);
 
     OutboxEvent afterB = fixture.repository().findById(id).orElseThrow();
@@ -287,11 +383,14 @@ class OutboxRelayIntegrationTest extends AbstractPostgresIntegrationTest {
     OutboxRelay workerA =
         OutboxTestSupport.relay(
             fixture,
-            event -> {
-              fixture.repository().recoverAbandoned(Instant.now().plus(Duration.ofMinutes(1)), 100);
-              fixture.repository().claimBatch(1, "worker-b");
-              return new PublicationResult("broker-a", Instant.now());
-            },
+            OutboxTestSupport.sync(
+                event -> {
+                  fixture
+                      .repository()
+                      .recoverAbandoned(Instant.now().plus(Duration.ofMinutes(1)), 100);
+                  fixture.repository().claimBatch(1, "worker-b");
+                  return new PublicationResult("broker-a", Instant.now());
+                }),
             "worker-a");
 
     RelayResult result = workerA.relayBatch();

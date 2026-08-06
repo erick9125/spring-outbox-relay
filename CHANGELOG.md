@@ -6,6 +6,22 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- The relay hands the whole claimed batch to the broker before awaiting any of it, and settles it
+  against a single deadline: the new `spring.outbox.relay.publish-timeout` (default 30s). It used
+  to await each acknowledgement before sending the next, so a batch cost the sum of its latencies
+  — with `batch-size: 100` and a stuck broker, 100 timeouts back to back, far longer than the 5
+  minute `lock-timeout`. The recovery job would then reclaim rows the relay was still publishing.
+  Keep `publish-timeout` below `lock-timeout`.
+- `MessageBrokerPublisher.publish` returns `CompletableFuture<PublicationResult>` so adapters do
+  not block the batch. **Breaking** for custom adapters; a synchronous one only needs
+  `CompletableFuture.completedFuture(...)`.
+- `outbox.publication.duration` is now tagged `result=success|failure` and measured on the
+  broker's acknowledgement rather than around a blocking call, so a 30 second timeout no longer
+  sits in the same distribution as successful publications.
+- `last_error` names the failure that caused a reschedule. It recorded only
+  `retryable publication failure; delay=PT5S`, leaving an operator with no idea what went wrong;
+  the wrapper's message and the root cause are both kept when they differ.
+
 - Claiming a batch is now a single statement. It was a SELECT, then one UPDATE per row, then a
   SELECT to read the rows back: `2 + batch-size` round trips every poll — 102 per second at the
   default settings — all while holding row locks. A CTE with `FOR UPDATE SKIP LOCKED` and

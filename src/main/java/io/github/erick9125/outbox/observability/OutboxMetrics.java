@@ -1,6 +1,5 @@
 package io.github.erick9125.outbox.observability;
 
-import io.github.erick9125.outbox.domain.PublicationResult;
 import io.github.erick9125.outbox.persistence.OutboxRepository;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -8,7 +7,6 @@ import io.micrometer.core.instrument.Timer;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Objects;
-import java.util.function.Supplier;
 
 public final class OutboxMetrics {
 
@@ -70,18 +68,20 @@ public final class OutboxMetrics {
     Counter.builder("outbox.events.recovered").register(meterRegistry).increment(count);
   }
 
-  public PublicationResult recordPublication(
-      String destination, String eventType, Supplier<PublicationResult> publisher) {
-    Timer.Sample sample = Timer.start(meterRegistry);
-    try {
-      return publisher.get();
-    } finally {
-      sample.stop(
-          Timer.builder("outbox.publication.duration")
-              .tag("destination", safe(destination))
-              .tag("event_type", safe(eventType))
-              .register(meterRegistry));
-    }
+  /**
+   * Records how long the broker took to acknowledge one event.
+   *
+   * <p>Tagged with the outcome so that failures — a 30 second timeout, most of all — do not sit in
+   * the same distribution as successful publications and drag the success percentiles with them.
+   */
+  public void recordPublicationDuration(
+      String destination, String eventType, boolean success, Duration duration) {
+    Timer.builder("outbox.publication.duration")
+        .tag("destination", safe(destination))
+        .tag("event_type", safe(eventType))
+        .tag("result", success ? "success" : "failure")
+        .register(meterRegistry)
+        .record(duration);
   }
 
   private Counter counter(String name, String destination, String eventType, String result) {

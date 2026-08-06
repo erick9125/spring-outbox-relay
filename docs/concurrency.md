@@ -69,8 +69,26 @@ Lost claims are counted in `outbox.events.lock.lost` and reported as `RelayResul
 A sustained non-zero rate means batches are not finishing within `lock-timeout`: raise
 `lock-timeout`, or lower `batch-size` so a batch completes inside it.
 
-## Execution model note
+## Execution model
 
-The Kafka adapter waits for producer acknowledgement (`Future.get` with timeout).
-In 0.1.0 this is acceptable for a dedicated, bounded relay loop. Document and
-tune `batch-size` and poll interval for your throughput targets.
+The relay hands the whole claimed batch to the broker before awaiting any of it, then settles
+each event against a single deadline — `publish-timeout`, 30s by default.
+
+```text
+claim batch (short transaction, commit)
+→ hand every event to the broker      (no waiting)
+→ await each acknowledgement          (one deadline for the batch)
+→ mark PUBLISHED / reschedule / FAILED
+```
+
+This matters for more than throughput. Awaiting each acknowledgement before sending the next
+made a batch cost the *sum* of its latencies: with `batch-size: 100` and a stuck broker that is
+100 timeouts back to back, far longer than the 5 minute `lock-timeout`. The recovery job would
+start reclaiming rows the relay was still publishing, which shows up as a flood of
+`outbox.events.lock.lost`.
+
+So the two settings are related: **keep `publish-timeout` below `lock-timeout`**. The first
+bounds how long a poll can hold its claims; the second is when someone else may take them.
+
+`MessageBrokerPublisher` returns a `CompletableFuture` for this reason. An adapter that blocks
+inside `publish` puts the serial chain back.

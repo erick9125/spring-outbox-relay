@@ -1,5 +1,7 @@
 package io.github.erick9125.outbox.relay;
 
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+
 import io.github.erick9125.outbox.broker.MessageBrokerPublisher;
 import io.github.erick9125.outbox.configuration.OutboxProperties;
 import io.github.erick9125.outbox.domain.OutboxEvent;
@@ -13,8 +15,14 @@ import io.github.erick9125.outbox.retry.RetryDecision;
 import io.github.erick9125.outbox.retry.RetryPolicy;
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -60,31 +68,22 @@ public final class DefaultOutboxRelay implements OutboxRelay {
 
     metrics.incrementClaimed(events.size());
 
+    // Phase one: hand the whole batch to the broker. Nothing is awaited yet, so the batch costs one
+    // round trip rather than one per event. Awaiting each acknowledgement before sending the next
+    // made a batch take up to batch-size x publish-timeout, long enough for lock-timeout to elapse
+    // and for the recovery job to reclaim rows that were still being published.
+    List<InFlight> inFlight = events.stream().map(this::send).toList();
+
+    // Phase two: settle each one against a single deadline for the whole batch.
+    Instant deadline = Instant.now().plus(properties.publishTimeout());
+
     int published = 0;
     int rescheduled = 0;
     int failed = 0;
     int lockLost = 0;
 
-    for (OutboxEvent event : events) {
-      Outcome outcome;
-      try {
-        PublicationResult result =
-            Observation.createNotStarted("outbox.publish", observationRegistry)
-                .lowCardinalityKeyValue("destination", event.destination())
-                .lowCardinalityKeyValue("event_type", event.eventType())
-                .observe(
-                    () ->
-                        metrics.recordPublication(
-                            event.destination(),
-                            event.eventType(),
-                            () -> brokerPublisher.publish(event)));
-
-        outcome = recordPublication(event, result);
-      } catch (Exception exception) {
-        outcome = handleFailure(event, exception);
-      }
-
-      switch (outcome) {
+    for (InFlight pending : inFlight) {
+      switch (settle(pending, deadline)) {
         case PUBLISHED -> published++;
         case RESCHEDULED -> rescheduled++;
         case FAILED -> failed++;
@@ -94,6 +93,91 @@ public final class DefaultOutboxRelay implements OutboxRelay {
 
     return new RelayResult(events.size(), published, rescheduled, failed, lockLost);
   }
+
+  /**
+   * Hands one event to the broker. An adapter that throws instead of returning a failed future is
+   * treated the same way, so a misbehaving adapter cannot abort the rest of the batch.
+   */
+  private InFlight send(OutboxEvent event) {
+    Observation observation =
+        Observation.createNotStarted("outbox.publish", observationRegistry)
+            .lowCardinalityKeyValue("destination", event.destination())
+            .lowCardinalityKeyValue("event_type", event.eventType())
+            .start();
+
+    long startedAt = System.nanoTime();
+    CompletableFuture<PublicationResult> future;
+    try {
+      future = brokerPublisher.publish(event);
+      if (future == null) {
+        future =
+            CompletableFuture.failedFuture(
+                new IllegalStateException("MessageBrokerPublisher returned a null future"));
+      }
+    } catch (RuntimeException exception) {
+      future = CompletableFuture.failedFuture(exception);
+    }
+
+    // Timed on completion rather than at settle time, so the recorded latency is the broker's own
+    // and not inflated by the events settled ahead of this one.
+    future.whenComplete(
+        (result, failure) ->
+            metrics.recordPublicationDuration(
+                event.destination(),
+                event.eventType(),
+                failure == null,
+                Duration.ofNanos(System.nanoTime() - startedAt)));
+
+    return new InFlight(event, future, observation);
+  }
+
+  private Outcome settle(InFlight pending, Instant deadline) {
+    try {
+      PublicationResult result = pending.future().get(remainingMillis(deadline), MILLISECONDS);
+      pending.observation().stop();
+      return recordPublication(pending.event(), result);
+    } catch (TimeoutException exception) {
+      // The send may still land later, which is exactly the at-least-once window consumers
+      // deduplicate against.
+      return fail(
+          pending,
+          new RetryablePublicationException(
+              "Broker did not acknowledge within " + properties.publishTimeout(), exception));
+    } catch (InterruptedException exception) {
+      Thread.currentThread().interrupt();
+      return fail(
+          pending,
+          new RetryablePublicationException("Interrupted while awaiting the broker", exception));
+    } catch (ExecutionException exception) {
+      return fail(pending, unwrap(exception));
+    } catch (RuntimeException exception) {
+      return fail(pending, exception);
+    }
+  }
+
+  private Outcome fail(InFlight pending, Throwable failure) {
+    pending.observation().error(failure);
+    pending.observation().stop();
+    return handleFailure(pending.event(), failure);
+  }
+
+  private static long remainingMillis(Instant deadline) {
+    long remaining = Duration.between(Instant.now(), deadline).toMillis();
+    return Math.max(0L, remaining);
+  }
+
+  /** Strips the future plumbing so the retry policy and {@code last_error} see the real cause. */
+  private static Throwable unwrap(Throwable failure) {
+    Throwable cause = failure;
+    while ((cause instanceof ExecutionException || cause instanceof CompletionException)
+        && cause.getCause() != null) {
+      cause = cause.getCause();
+    }
+    return cause;
+  }
+
+  private record InFlight(
+      OutboxEvent event, CompletableFuture<PublicationResult> future, Observation observation) {}
 
   private Outcome recordPublication(OutboxEvent event, PublicationResult result) {
     Boolean owned =
@@ -111,7 +195,7 @@ public final class DefaultOutboxRelay implements OutboxRelay {
     return Outcome.PUBLISHED;
   }
 
-  private Outcome handleFailure(OutboxEvent event, Exception exception) {
+  private Outcome handleFailure(OutboxEvent event, Throwable exception) {
     RetryDecision decision = retryPolicy.evaluate(event, exception);
     int attempts = event.attempts() + 1;
 

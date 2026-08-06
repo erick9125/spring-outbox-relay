@@ -14,6 +14,7 @@ public record OutboxProperties(
     String instanceId,
     @DefaultValue("1m") Duration recoveryInterval,
     @DefaultValue("500") int maintenanceBatchSize,
+    @DefaultValue("30s") Duration publishTimeout,
     @DefaultValue Retry retry,
     @DefaultValue Cleanup cleanup) {
 
@@ -26,6 +27,12 @@ public record OutboxProperties(
     }
     if (maintenanceBatchSize < 1) {
       maintenanceBatchSize = 500;
+    }
+    // A batch is awaited against this as a single deadline, so it also bounds how long a poll can
+    // hold its claims. Keeping it below lock-timeout is what stops the recovery job from reclaiming
+    // rows that are still in flight.
+    if (publishTimeout == null || publishTimeout.isNegative() || publishTimeout.isZero()) {
+      publishTimeout = Duration.ofSeconds(30);
     }
     if (retry == null) {
       retry = Retry.defaults();
@@ -45,6 +52,7 @@ public record OutboxProperties(
         null,
         Duration.ofMinutes(1),
         500,
+        Duration.ofSeconds(30),
         Retry.defaults(),
         Cleanup.defaults());
   }

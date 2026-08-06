@@ -227,6 +227,7 @@ spring:
       instance-id: order-service-1
       recovery-interval: 1m
       maintenance-batch-size: 500
+      publish-timeout: 30s
       retry:
         initial-delay: 5s
         maximum-delay: 5m
@@ -248,6 +249,7 @@ spring:
 | `spring.outbox.relay.instance-id` | hostname + pid | Worker identity stored in `locked_by` |
 | `spring.outbox.relay.recovery-interval` | `1m` | Delay between recovery runs |
 | `spring.outbox.relay.maintenance-batch-size` | `500` | Rows per statement in the recovery and cleanup jobs |
+| `spring.outbox.relay.publish-timeout` | `30s` | Deadline for a whole batch to be acknowledged. Keep it below `lock-timeout` |
 | `spring.outbox.relay.retry.initial-delay` | `5s` | Base backoff delay |
 | `spring.outbox.relay.retry.maximum-delay` | `5m` | Backoff ceiling |
 | `spring.outbox.relay.cleanup.retention` | `7d` | Retention for `PUBLISHED` rows |
@@ -439,7 +441,7 @@ More detail: [docs/failure-scenarios.md](docs/failure-scenarios.md) and
 | `outbox.events.failed` | Permanent / exhausted failures |
 | `outbox.events.lock.lost` | Claims reclaimed by another instance mid-flight |
 | `outbox.events.recovered` | Abandoned locks recovered |
-| `outbox.publication.duration` | Publish latency |
+| `outbox.publication.duration` | Broker acknowledgement latency, tagged `result=success|failure` |
 | `outbox.pending.count` | Current backlog |
 | `outbox.oldest.pending.age` | Age of the oldest pending event |
 

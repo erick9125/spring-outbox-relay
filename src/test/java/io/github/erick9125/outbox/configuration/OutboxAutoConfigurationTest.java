@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -145,7 +146,8 @@ class OutboxAutoConfigurationTest {
 
   @Test
   void yieldsToAnApplicationSuppliedMessageBrokerPublisher() {
-    MessageBrokerPublisher custom = event -> new PublicationResult("custom", Instant.EPOCH);
+    MessageBrokerPublisher custom =
+        event -> CompletableFuture.completedFuture(new PublicationResult("custom", Instant.EPOCH));
 
     runner
         .withBean(OutboxRepository.class, StubOutboxRepository::new)
