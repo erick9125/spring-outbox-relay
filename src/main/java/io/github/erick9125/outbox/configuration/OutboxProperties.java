@@ -21,40 +21,54 @@ public record OutboxProperties(
     @DefaultValue Retry retry,
     @DefaultValue Cleanup cleanup) {
 
+  /**
+   * Rejects invalid configuration instead of quietly substituting a default.
+   *
+   * <p>Silently correcting {@code batch-size: 0} back to 100 meant a typo in a deployment behaved
+   * like a working configuration, and the operator had no way to tell that the value they set was
+   * being ignored. {@code @DefaultValue} already covers properties that are simply absent, so
+   * anything reaching these checks was set explicitly and set wrong.
+   */
   public OutboxProperties {
-    if (batchSize < 1) {
-      batchSize = 100;
-    }
-    if (defaultMaxAttempts < 1) {
-      defaultMaxAttempts = 5;
-    }
-    if (maintenanceBatchSize < 1) {
-      maintenanceBatchSize = 500;
-    }
+    requirePositive(batchSize, "batch-size");
+    requirePositive(defaultMaxAttempts, "default-max-attempts");
+    requirePositive(maintenanceBatchSize, "maintenance-batch-size");
     // Deploys interrupt in-flight publications, so a handful of recoveries is normal operation and
     // the budget only has to be tight enough to catch an event that keeps killing its worker.
-    if (maxRecoveries < 1) {
-      maxRecoveries = 3;
-    }
+    requirePositive(maxRecoveries, "max-recoveries");
+
+    requirePositive(pollInterval, "poll-interval");
+    requirePositive(lockTimeout, "lock-timeout");
+    requirePositive(recoveryInterval, "recovery-interval");
     // A batch is awaited against this as a single deadline, so it also bounds how long a poll can
     // hold its claims. Keeping it below lock-timeout is what stops the recovery job from reclaiming
     // rows that are still in flight.
-    if (publishTimeout == null || publishTimeout.isNegative() || publishTimeout.isZero()) {
-      publishTimeout = Duration.ofSeconds(30);
-    }
-    if (backlogMetricsInterval == null
-        || backlogMetricsInterval.isNegative()
-        || backlogMetricsInterval.isZero()) {
-      backlogMetricsInterval = Duration.ofSeconds(10);
-    }
+    requirePositive(publishTimeout, "publish-timeout");
+    requirePositive(backlogMetricsInterval, "backlog-metrics-interval");
     if (shutdownTimeout == null || shutdownTimeout.isNegative()) {
-      shutdownTimeout = Duration.ofSeconds(30);
+      throw new IllegalArgumentException(
+          "spring.outbox.relay.shutdown-timeout must not be negative, was " + shutdownTimeout);
     }
+
     if (retry == null) {
       retry = Retry.defaults();
     }
     if (cleanup == null) {
       cleanup = Cleanup.defaults();
+    }
+  }
+
+  private static void requirePositive(int value, String property) {
+    if (value < 1) {
+      throw new IllegalArgumentException(
+          "spring.outbox.relay." + property + " must be at least 1, was " + value);
+    }
+  }
+
+  private static void requirePositive(Duration value, String property) {
+    if (value == null || value.isNegative() || value.isZero()) {
+      throw new IllegalArgumentException(
+          "spring.outbox.relay." + property + " must be a positive duration, was " + value);
     }
   }
 

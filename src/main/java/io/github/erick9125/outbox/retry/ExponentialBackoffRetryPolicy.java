@@ -2,7 +2,6 @@ package io.github.erick9125.outbox.retry;
 
 import io.github.erick9125.outbox.domain.OutboxEvent;
 import io.github.erick9125.outbox.exception.PermanentPublicationException;
-import io.github.erick9125.outbox.exception.RetryablePublicationException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -24,8 +23,10 @@ public final class ExponentialBackoffRetryPolicy implements RetryPolicy {
 
   public ExponentialBackoffRetryPolicy(
       Duration initialDelay, Duration maximumDelay, double multiplier, double jitter, Clock clock) {
-    if (initialDelay.isNegative() || initialDelay.isZero()) {
-      throw new IllegalArgumentException("initialDelay must be positive");
+    // Milliseconds are the unit the delay is computed in, so a positive but sub-millisecond delay
+    // rounds to zero and makes the jitter bound zero, which ThreadLocalRandom rejects outright.
+    if (initialDelay.isNegative() || initialDelay.isZero() || initialDelay.toMillis() < 1) {
+      throw new IllegalArgumentException("initialDelay must be at least 1ms, was " + initialDelay);
     }
     if (maximumDelay.compareTo(initialDelay) < 0) {
       throw new IllegalArgumentException("maximumDelay must be >= initialDelay");
@@ -49,13 +50,16 @@ public final class ExponentialBackoffRetryPolicy implements RetryPolicy {
       return RetryDecision.fail("permanent publication failure: " + describe(failure));
     }
 
+    // Everything that is not explicitly permanent is retried, including exceptions this library has
+    // never seen. Discarding an event because of an unexpected error would be the worse failure: a
+    // retry costs a duplicate the consumer already deduplicates, a discard loses the event.
     int nextAttempt = event.attempts() + 1;
     if (nextAttempt >= event.maxAttempts()) {
-      return RetryDecision.fail("max attempts exhausted (" + event.maxAttempts() + ")");
-    }
-
-    if (!isRetryable(failure)) {
-      return RetryDecision.fail("non-retryable publication failure: " + describe(failure));
+      return RetryDecision.fail(
+          "max attempts exhausted ("
+              + event.maxAttempts()
+              + "); last failure: "
+              + describe(failure));
     }
 
     Duration delay = computeDelay(nextAttempt);
@@ -88,20 +92,6 @@ public final class ExponentialBackoffRetryPolicy implements RetryPolicy {
       current = current.getCause();
     }
     return false;
-  }
-
-  private static boolean isRetryable(Throwable failure) {
-    Throwable current = failure;
-    while (current != null) {
-      if (current instanceof RetryablePublicationException) {
-        return true;
-      }
-      if (current instanceof PermanentPublicationException) {
-        return false;
-      }
-      current = current.getCause();
-    }
-    return true;
   }
 
   /**

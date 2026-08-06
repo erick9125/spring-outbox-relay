@@ -6,6 +6,38 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Invalid configuration now fails at startup instead of being silently replaced by a default.
+  `batch-size: 0` quietly became 100, so a typo in a deployment behaved like a working
+  configuration and the operator had no way to tell their value was ignored.
+- `OutboxMessage` validates its string fields against the column widths, naming the field. An
+  over-long value used to reach the insert and come back as a raw SQL error that took the caller's
+  business transaction with it.
+- `outbox.events.created` is incremented after the transaction commits. Counting at insert time
+  kept the increment for rows that a business rollback removed.
+- The relay repository uses the application's `PlatformTransactionManager` when there is one. It
+  built a `DataSourceTransactionManager` of its own, which worked by binding to the same
+  `DataSource` but ignored whatever the application had configured.
+- `RetryDecision` rejects `retry = true` without a timestamp, and a blank reason. A custom policy
+  returning either used to fail deep inside the repository instead of at the mistake.
+- `ExponentialBackoffRetryPolicy` rejects a sub-millisecond `initial-delay`. Positive but rounding
+  to zero milliseconds made the jitter bound zero, which `ThreadLocalRandom` rejects outright.
+- `last_error` for an exhausted retry budget now also names the failure that exhausted it, and a
+  truncated value ends with `… [truncated]` so a reader knows it was cut.
+- Removed an unreachable branch in the retry policy. `isPermanent` already matched anything
+  carrying a `PermanentPublicationException`, so the `non-retryable` path could never be taken and
+  `isRetryable` could never return false. Unrecognised failures are retried on purpose — a retry
+  costs a duplicate the consumer already deduplicates, a discard loses the event — and that is now
+  stated in one place instead of implied by dead code.
+- Dropped the `integrationTest` Gradle task, which duplicated `test`, and documented that
+  `unitTest` is a Docker-free convenience deliberately not wired into `check`.
+
+### Documented
+
+- The payload constraint the library cannot check: PostgreSQL's `jsonb` rejects `U+0000` inside
+  strings, so a payload carrying one fails the insert and the surrounding transaction with it.
+
+### Fixed
+
 - A poison event no longer loops forever. An event whose processing killed its worker was handed
   back to `PENDING` by recovery with nothing incremented, claimed again, and killed the next worker
   too. Migration `V2` adds a `recoveries` column, bounded by the new

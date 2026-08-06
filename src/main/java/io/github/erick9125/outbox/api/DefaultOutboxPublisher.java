@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 public final class DefaultOutboxPublisher implements OutboxPublisher {
@@ -56,9 +57,26 @@ public final class DefaultOutboxPublisher implements OutboxPublisher {
               String payloadJson = writeJson(message.payload(), "payload");
               String headersJson = writeJson(safeHeaders(message.headers()), "headers");
               UUID id = repository.insert(message, payloadJson, headersJson, occurredAt);
-              metrics.incrementCreated(message.destination(), message.eventType());
+              countAfterCommit(message);
               return id;
             });
+  }
+
+  /**
+   * Counts the event once the surrounding transaction commits.
+   *
+   * <p>Counting at insert time overstated the metric: the business transaction can still roll back,
+   * taking the outbox row with it, and {@code outbox.events.created} would keep the increment for a
+   * row that never existed.
+   */
+  private void countAfterCommit(OutboxMessage message) {
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            metrics.incrementCreated(message.destination(), message.eventType());
+          }
+        });
   }
 
   /**

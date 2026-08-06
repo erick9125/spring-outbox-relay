@@ -71,30 +71,19 @@ tasks.test {
     systemProperty("spring.profiles.active", "test")
 }
 
+// `test` — and therefore `check` — runs everything, integration tests included. This is only a
+// convenience for iterating without Docker; it is deliberately not wired into `check`, because a
+// verification task that skips the integration tests would give a false sense of coverage.
 tasks.register<Test>("unitTest") {
-    description = "Runs unit tests only"
+    description = "Runs the tests that do not need Docker"
     group = "verification"
-    useJUnitPlatform {
-        excludeTags("integration")
-    }
+    useJUnitPlatform()
     testClassesDirs = sourceSets["test"].output.classesDirs
     classpath = sourceSets["test"].runtimeClasspath
     filter {
         includeTestsMatching("*Test")
         excludeTestsMatching("*IntegrationTest")
     }
-}
-
-tasks.register<Test>("integrationTest") {
-    description = "Runs Testcontainers integration tests"
-    group = "verification"
-    useJUnitPlatform()
-    testClassesDirs = sourceSets["test"].output.classesDirs
-    classpath = sourceSets["test"].runtimeClasspath
-    filter {
-        includeTestsMatching("*IntegrationTest")
-    }
-    shouldRunAfter("unitTest")
 }
 
 tasks.withType<JavaCompile> {
