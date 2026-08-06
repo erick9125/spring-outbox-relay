@@ -1,6 +1,7 @@
 package io.github.erick9125.outbox.configuration;
 
 import io.github.erick9125.outbox.cleanup.OutboxCleanupService;
+import io.github.erick9125.outbox.observability.OutboxMetrics;
 import io.github.erick9125.outbox.recovery.OutboxRecoveryService;
 import io.github.erick9125.outbox.relay.OutboxRelay;
 import io.github.erick9125.outbox.scheduling.OutboxScheduler;
@@ -10,7 +11,6 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
-import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * Drives the relay, recovery and cleanup jobs on a schedule.
@@ -30,7 +30,6 @@ import org.springframework.scheduling.annotation.EnableScheduling;
     name = "enabled",
     havingValue = "true",
     matchIfMissing = true)
-@EnableScheduling
 public class OutboxSchedulingAutoConfiguration {
 
   @Bean
@@ -38,7 +37,10 @@ public class OutboxSchedulingAutoConfiguration {
   OutboxScheduler outboxScheduler(
       OutboxRelay outboxRelay,
       OutboxRecoveryService outboxRecoveryService,
-      OutboxCleanupService outboxCleanupService) {
-    return new OutboxScheduler(outboxRelay, outboxRecoveryService, outboxCleanupService);
+      OutboxCleanupService outboxCleanupService,
+      OutboxMetrics outboxMetrics,
+      OutboxProperties properties) {
+    return new OutboxScheduler(
+        outboxRelay, outboxRecoveryService, outboxCleanupService, outboxMetrics, properties);
   }
 }

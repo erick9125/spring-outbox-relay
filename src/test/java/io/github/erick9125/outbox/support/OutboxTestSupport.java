@@ -66,6 +66,8 @@ public final class OutboxTestSupport {
         Duration.ofSeconds(30),
         500,
         Duration.ofSeconds(30),
+        Duration.ofSeconds(10),
+        Duration.ofSeconds(30),
         new OutboxProperties.Retry(Duration.ofSeconds(5), Duration.ofMinutes(5), 2.0d, 0.0d),
         OutboxProperties.Cleanup.defaults());
   }
@@ -124,6 +126,8 @@ public final class OutboxTestSupport {
             fixture.properties().recoveryInterval(),
             fixture.properties().maintenanceBatchSize(),
             publishTimeout,
+            fixture.properties().backlogMetricsInterval(),
+            fixture.properties().shutdownTimeout(),
             fixture.properties().retry(),
             fixture.properties().cleanup());
     return new DefaultOutboxRelay(

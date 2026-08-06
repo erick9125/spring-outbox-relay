@@ -15,6 +15,8 @@ public record OutboxProperties(
     @DefaultValue("1m") Duration recoveryInterval,
     @DefaultValue("500") int maintenanceBatchSize,
     @DefaultValue("30s") Duration publishTimeout,
+    @DefaultValue("10s") Duration backlogMetricsInterval,
+    @DefaultValue("30s") Duration shutdownTimeout,
     @DefaultValue Retry retry,
     @DefaultValue Cleanup cleanup) {
 
@@ -34,6 +36,14 @@ public record OutboxProperties(
     if (publishTimeout == null || publishTimeout.isNegative() || publishTimeout.isZero()) {
       publishTimeout = Duration.ofSeconds(30);
     }
+    if (backlogMetricsInterval == null
+        || backlogMetricsInterval.isNegative()
+        || backlogMetricsInterval.isZero()) {
+      backlogMetricsInterval = Duration.ofSeconds(10);
+    }
+    if (shutdownTimeout == null || shutdownTimeout.isNegative()) {
+      shutdownTimeout = Duration.ofSeconds(30);
+    }
     if (retry == null) {
       retry = Retry.defaults();
     }
@@ -52,6 +62,8 @@ public record OutboxProperties(
         null,
         Duration.ofMinutes(1),
         500,
+        Duration.ofSeconds(30),
+        Duration.ofSeconds(10),
         Duration.ofSeconds(30),
         Retry.defaults(),
         Cleanup.defaults());

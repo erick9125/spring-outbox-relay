@@ -63,6 +63,8 @@ class OutboxRecoveryServiceIntegrationTest extends AbstractPostgresIntegrationTe
             Duration.ofMinutes(1),
             500,
             Duration.ofSeconds(30),
+            Duration.ofSeconds(10),
+            Duration.ofSeconds(30),
             OutboxProperties.Retry.defaults(),
             OutboxProperties.Cleanup.defaults());
     OutboxRecoveryService recovery =
@@ -114,6 +116,8 @@ class OutboxRecoveryServiceIntegrationTest extends AbstractPostgresIntegrationTe
             "recovery",
             Duration.ofMinutes(1),
             2,
+            Duration.ofSeconds(30),
+            Duration.ofSeconds(10),
             Duration.ofSeconds(30),
             OutboxProperties.Retry.defaults(),
             OutboxProperties.Cleanup.defaults());

@@ -61,6 +61,18 @@
       "defaultValue": "30s"
     },
     {
+      "name": "spring.outbox.relay.backlog-metrics-interval",
+      "type": "java.time.Duration",
+      "description": "How often the outbox.pending.count and outbox.oldest.pending.age gauges are refreshed. The gauges read cached values, so this fixes the database cost regardless of how many collectors scrape the application.",
+      "defaultValue": "10s"
+    },
+    {
+      "name": "spring.outbox.relay.shutdown-timeout",
+      "type": "java.time.Duration",
+      "description": "How long shutdown waits for the job run in progress to finish before giving up. Cutting a relay run short leaves its claims in PROCESSING until lock-timeout elapses.",
+      "defaultValue": "30s"
+    },
+    {
       "name": "spring.outbox.relay.retry.initial-delay",
       "type": "java.time.Duration",
       "description": "Base delay for the first retry.",
