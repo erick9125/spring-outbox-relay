@@ -6,6 +6,33 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- The jobs run on a thread pool the library owns, one thread each, instead of on `@Scheduled`
+  methods. The library no longer turns on `@EnableScheduling` for the whole host application, and
+  a cleanup run deleting a large backlog can no longer block the relay: all four jobs previously
+  shared Spring Boot's default scheduler, whose pool size is one. The pool is deliberately not
+  exposed as a bean, since a second `TaskScheduler` changes which one the application's own
+  `@Scheduled` methods resolve to.
+- Shutdown is graceful. `OutboxScheduler` is a `SmartLifecycle` that stops scheduling and then
+  waits up to the new `spring.outbox.relay.shutdown-timeout` (default 30s) for the run in
+  progress. Every deploy used to kill the relay mid-publication, leaving up to `batch-size` rows
+  in `PROCESSING` until `lock-timeout` elapsed — minutes of delay on every release.
+- The backlog gauges read cached values, refreshed on the new
+  `spring.outbox.relay.backlog-metrics-interval` (default 10s). They ran `COUNT(*)` and an
+  `ORDER BY` against the outbox table on every scrape, on the scrape thread and holding a pooled
+  connection, so a slow database could hang `/actuator/prometheus` and each extra collector
+  multiplied the cost. They are also registered so the registry keeps a strong reference; the
+  previous form held the state weakly and would report `NaN` once it was collected.
+- A job that throws no longer stops being scheduled, and the failure is logged with the name of
+  the job that failed.
+
+### Documented
+
+- Ordering. Events are **not** delivered in order, not even per aggregate: `SKIP LOCKED` spreads
+  rows across instances, a batch is published concurrently, and a rescheduled event arrives after
+  the ones behind it. `partitionKey` chooses the Kafka partition, which bounds where ordering
+  could hold, but the relay never serialises the events sharing a key. The README implied
+  otherwise.
+
 - The relay hands the whole claimed batch to the broker before awaiting any of it, and settles it
   against a single deadline: the new `spring.outbox.relay.publish-timeout` (default 30s). It used
   to await each acknowledgement before sending the next, so a batch cost the sum of its latencies

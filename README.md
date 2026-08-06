@@ -228,6 +228,8 @@ spring:
       recovery-interval: 1m
       maintenance-batch-size: 500
       publish-timeout: 30s
+      backlog-metrics-interval: 10s
+      shutdown-timeout: 30s
       retry:
         initial-delay: 5s
         maximum-delay: 5m
@@ -250,6 +252,8 @@ spring:
 | `spring.outbox.relay.recovery-interval` | `1m` | Delay between recovery runs |
 | `spring.outbox.relay.maintenance-batch-size` | `500` | Rows per statement in the recovery and cleanup jobs |
 | `spring.outbox.relay.publish-timeout` | `30s` | Deadline for a whole batch to be acknowledged. Keep it below `lock-timeout` |
+| `spring.outbox.relay.backlog-metrics-interval` | `10s` | How often the backlog gauges are refreshed |
+| `spring.outbox.relay.shutdown-timeout` | `30s` | How long shutdown waits for the run in progress |
 | `spring.outbox.relay.retry.initial-delay` | `5s` | Base backoff delay |
 | `spring.outbox.relay.retry.maximum-delay` | `5m` | Backoff ceiling |
 | `spring.outbox.relay.cleanup.retention` | `7d` | Retention for `PUBLISHED` rows |
@@ -316,7 +320,7 @@ OutboxMessage.builder()
     .eventType("order.created")      // event name / routing intent
     .eventVersion(1)                 // contract version
     .destination("orders.events")    // Kafka topic
-    .partitionKey(orderId)           // keeps related events ordered in a partition
+    .partitionKey(orderId)           // Kafka partition the event lands in (not an order guarantee)
     .payload(eventObject)            // serialized with Jackson to JSONB
     .headers(Map.of("correlation-id", "abc"))
     .maxAttempts(5)                  // optional override
@@ -361,8 +365,14 @@ public void onOrderCreated(ConsumerRecord<String, String> record) {
 }
 ```
 
-Use `partitionKey` on the producer side when related events for the same aggregate must
-preserve order within a Kafka partition.
+Consumers must also not assume ordering. Events are **not** delivered in order, not even for a
+single aggregate: `SKIP LOCKED` gives different rows to different instances, a batch is published
+concurrently, and a rescheduled event arrives after the ones behind it. `partitionKey` chooses
+the Kafka partition an event lands in, which bounds where ordering could hold, but the relay
+never serialises the events that share a key.
+
+If order matters to a consumer, carry it in the payload — a per-aggregate sequence number, or a
+design where the events commute. See [docs/concurrency.md](docs/concurrency.md).
 
 ### 5. Trigger the relay manually
 

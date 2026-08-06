@@ -92,3 +92,32 @@ bounds how long a poll can hold its claims; the second is when someone else may 
 
 `MessageBrokerPublisher` returns a `CompletableFuture` for this reason. An adapter that blocks
 inside `publish` puts the serial chain back.
+
+Each job runs on its own thread in a pool the library owns, so a cleanup run deleting a large
+backlog cannot delay the relay. That pool is not published as a bean: a second `TaskScheduler`
+in the context would change which one the application's own `@Scheduled` methods resolve to.
+
+## No ordering guarantee
+
+**Events are not delivered in order.** Not globally, and not per aggregate.
+
+```text
+Two events for order-1, published in sequence:
+
+instance A claims #1 ─┐
+instance B claims #2 ─┴─► both publish concurrently → either order
+```
+
+Three separate reasons, any one of which is enough:
+
+- `SKIP LOCKED` hands different rows to different instances, which publish in parallel.
+- Within one batch, every event is handed to the broker at once, so acknowledgements interleave.
+- A failure reorders regardless of the above: if #1 is rescheduled 5 seconds out while #2
+  publishes immediately, #2 arrives first — even with a single instance and a single thread.
+
+`partitionKey` decides which Kafka partition an event lands in. That bounds where ordering
+*could* hold, but it does not create it: the relay never serialises the events sharing a key.
+
+If your consumers need order, they have to handle it themselves — sequence numbers per
+aggregate, or a design where the events are commutative. Version your payloads with
+`eventVersion` and include whatever ordering data the consumer needs inside the event.

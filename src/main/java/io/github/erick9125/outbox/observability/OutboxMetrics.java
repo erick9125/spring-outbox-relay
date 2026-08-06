@@ -2,17 +2,26 @@ package io.github.erick9125.outbox.observability;
 
 import io.github.erick9125.outbox.persistence.OutboxRepository;
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class OutboxMetrics {
+
+  private static final Logger log = LoggerFactory.getLogger(OutboxMetrics.class);
 
   private final MeterRegistry meterRegistry;
   private final OutboxRepository repository;
   private final Clock clock;
+
+  private final AtomicLong pendingCount = new AtomicLong();
+  private final AtomicLong oldestPendingAgeMillis = new AtomicLong();
 
   public OutboxMetrics(MeterRegistry meterRegistry, OutboxRepository repository) {
     this(meterRegistry, repository, Clock.systemUTC());
@@ -22,18 +31,39 @@ public final class OutboxMetrics {
     this.meterRegistry = Objects.requireNonNull(meterRegistry);
     this.repository = Objects.requireNonNull(repository);
     this.clock = Objects.requireNonNull(clock);
-    meterRegistry.gauge("outbox.pending.count", this, metrics -> metrics.repository.countPending());
-    meterRegistry.gauge(
-        "outbox.oldest.pending.age",
-        this,
-        metrics ->
-            metrics
-                .repository
-                .findOldestPendingAvailableAt()
-                .map(
-                    instant ->
-                        Math.max(0L, Duration.between(instant, metrics.clock.instant()).toMillis()))
-                .orElse(0L));
+
+    // The gauges read cached values. They used to query the database on every scrape, which put a
+    // COUNT(*) over the outbox table — and a connection from the pool — on the scrape thread, so a
+    // slow database could hang /actuator/prometheus, and every extra Prometheus server multiplied
+    // the load. A Supplier-based gauge also keeps a strong reference, where the object-and-function
+    // form holds the state weakly and silently reports NaN once it is collected.
+    Gauge.builder("outbox.pending.count", () -> (double) pendingCount.get())
+        .description("Events waiting to be relayed")
+        .register(meterRegistry);
+    Gauge.builder("outbox.oldest.pending.age", () -> (double) oldestPendingAgeMillis.get())
+        .description("Age of the oldest pending event")
+        .baseUnit("milliseconds")
+        .register(meterRegistry);
+  }
+
+  /**
+   * Re-reads the backlog into the cached gauges.
+   *
+   * <p>Driven by {@code backlog-metrics-interval} rather than by scrapes, so the cost is fixed no
+   * matter how many collectors are pointed at the application. Failures are logged and swallowed: a
+   * database hiccup should leave the gauges stale, not break the job that reports them.
+   */
+  public void refreshBacklog() {
+    try {
+      pendingCount.set(repository.countPending());
+      oldestPendingAgeMillis.set(
+          repository
+              .findOldestPendingAvailableAt()
+              .map(instant -> Math.max(0L, Duration.between(instant, clock.instant()).toMillis()))
+              .orElse(0L));
+    } catch (RuntimeException exception) {
+      log.warn("Could not refresh outbox backlog metrics; gauges keep their last value", exception);
+    }
   }
 
   public void incrementCreated(String destination, String eventType) {
