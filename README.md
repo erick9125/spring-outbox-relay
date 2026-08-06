@@ -542,8 +542,11 @@ curl http://localhost:8080/events
 ./gradlew check
 ```
 
-Integration tests use Testcontainers with real PostgreSQL and exercise claiming,
-rollback, retries, recovery, and concurrent workers.
+Integration tests use Testcontainers with real PostgreSQL and Kafka, and exercise claiming,
+rollback, retries, recovery, concurrent workers, and a full relay to a real broker with the record
+consumed back off the topic.
+
+Publishing is described in [RELEASING.md](RELEASING.md).
 
 ---
 
@@ -553,6 +556,7 @@ rollback, retries, recovery, and concurrent workers.
 - [Concurrency model](docs/concurrency.md)
 - [Failure scenarios](docs/failure-scenarios.md)
 - [Spring Modulith comparison](docs/spring-modulith-comparison.md)
+- [Releasing](RELEASING.md)
 
 ---
 
