@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [0.1.0-SNAPSHOT] - unreleased
 
+### Added
+
+- Release plumbing for the Central Portal, with no third-party publishing plugin: the build stages
+  the publication into a Maven-layout directory, the `signing` plugin signs it from a key passed
+  through the environment, and `centralBundle` zips what the Portal's upload API expects.
+  `.github/workflows/release.yml` cuts a release from a `v*` tag, checks the bundle is signed, and
+  uploads it as `USER_MANAGED` so nothing reaches Maven Central without a human publishing it.
+  Sonatype has no official Gradle plugin for the Portal, so the alternative was a community plugin
+  they explicitly do not support.
+- The version comes from `-PoutboxVersion`, and asking for a non-SNAPSHOT build without a signing
+  key fails with a message rather than producing a bundle Central would reject after the upload.
+- [RELEASING.md](RELEASING.md), covering the steps that cannot be automated from the repository:
+  verifying the `io.github.erick9125` namespace, creating and publishing a signing key, and the four
+  repository secrets.
+
 ### Fixed
 
 - The shipped migrations use timestamp-style versions (`V20260101000001__…`) instead of `V1__` and

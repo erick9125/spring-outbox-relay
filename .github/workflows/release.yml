@@ -1,0 +1,95 @@
+name: Release
+
+# Releases are cut from a tag, so the version that gets published is the version that was tagged —
+# there is no input to get wrong. The upload goes to the Central Portal as USER_MANAGED, which means
+# it lands in the Portal for review and nothing reaches Maven Central until you press publish.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Derive the version from the tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ]; then
+            echo "::error::Tag '$GITHUB_REF_NAME' does not carry a version"
+            exit 1
+          fi
+          case "$VERSION" in
+            *SNAPSHOT*)
+              echo "::error::Maven Central does not accept SNAPSHOT versions, got '$VERSION'"
+              exit 1
+              ;;
+          esac
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing $VERSION"
+
+      - name: Unit, integration, format, and static checks
+        run: ./gradlew check -PoutboxVersion=${{ steps.version.outputs.version }}
+
+      - name: Build the Central Portal bundle
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        run: ./gradlew centralBundle -PoutboxVersion=${{ steps.version.outputs.version }}
+
+      - name: Check the bundle is signed
+        run: |
+          BUNDLE="build/central/central-bundle-${{ steps.version.outputs.version }}.zip"
+          SIGNATURES=$(unzip -l "$BUNDLE" | grep -c '\.asc$' || true)
+          echo "$BUNDLE carries $SIGNATURES signatures"
+          if [ "$SIGNATURES" -lt 4 ]; then
+            echo "::error::Expected a signature for the jar, sources, javadoc and pom"
+            exit 1
+          fi
+
+      - name: Upload to the Central Portal
+        env:
+          CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+        run: |
+          BUNDLE="build/central/central-bundle-${{ steps.version.outputs.version }}.zip"
+          # The Portal takes Bearer base64(username:password). Built here so neither the token nor
+          # the encoded form is ever passed on a command line other people can read.
+          TOKEN=$(printf '%s:%s' "$CENTRAL_TOKEN_USERNAME" "$CENTRAL_TOKEN_PASSWORD" | base64 -w0)
+          HTTP=$(curl --silent --show-error \
+            --write-out '%{http_code}' \
+            --output /tmp/upload-response.txt \
+            --request POST \
+            --header "Authorization: Bearer $TOKEN" \
+            --form "bundle=@$BUNDLE;type=application/octet-stream" \
+            "https://central.sonatype.com/api/v1/publisher/upload?name=spring-outbox-relay-${{ steps.version.outputs.version }}&publishingType=USER_MANAGED")
+
+          echo "HTTP $HTTP"
+          cat /tmp/upload-response.txt
+          if [ "$HTTP" != "201" ]; then
+            echo "::error::Upload failed with HTTP $HTTP"
+            exit 1
+          fi
+          echo "Deployment created. Review and publish it at https://central.sonatype.com/publishing/deployments"
+
+      - name: Keep the bundle for inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: central-bundle
+          path: build/central/*.zip
+          if-no-files-found: warn

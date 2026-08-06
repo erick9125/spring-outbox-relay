@@ -2,6 +2,7 @@ plugins {
     java
     `java-library`
     `maven-publish`
+    signing
     checkstyle
     id("org.springframework.boot") version "3.5.4" apply false
     id("io.spring.dependency-management") version "1.1.7"
@@ -9,7 +10,11 @@ plugins {
 }
 
 group = "io.github.erick9125"
-version = "0.1.0-SNAPSHOT"
+
+// Overridden at release time with -PoutboxVersion=0.1.0. Assigning a literal here would win over a
+// plain -Pversion=, so the property is explicit about what it overrides. Maven Central rejects
+// SNAPSHOT versions, so a release must set this.
+version = providers.gradleProperty("outboxVersion").getOrElse("0.1.0-SNAPSHOT")
 description = "A reliable transactional outbox relay for Spring Boot"
 
 java {
@@ -171,6 +176,20 @@ tasks.named("check") {
 }
 
 publishing {
+    repositories {
+        // A local directory in Maven Repository Layout, which is exactly what the Central Portal
+        // wants zipped up. Publishing here also writes the .md5 and .sha1 files it expects.
+        maven {
+            name = "stagingDeploy"
+            url =
+                layout.buildDirectory
+                    .dir("staging-deploy")
+                    .get()
+                    .asFile
+                    .toURI()
+        }
+    }
+
     publications {
         create<MavenPublication>("mavenJava") {
             from(components["java"])
@@ -212,5 +231,84 @@ publishing {
                 }
             }
         }
+    }
+}
+
+// Signing is required by Maven Central and configured only when the key is present, so a normal
+// build — and `check` — works without any secrets. The key is the ASCII-armoured private key, passed
+// in through the environment rather than read from a keyring, which is what CI can do.
+signing {
+    // Environment first for CI, Gradle property as a fallback for running a release by hand. Both
+    // are read rather than a keyring, so nothing depends on the machine's GPG setup.
+    val signingKey =
+        providers
+            .environmentVariable("SIGNING_KEY")
+            .orElse(providers.gradleProperty("signingKey"))
+            .orNull
+    val signingPassword =
+        providers
+            .environmentVariable("SIGNING_PASSWORD")
+            .orElse(providers.gradleProperty("signingPassword"))
+            .orNull
+
+    if (!signingKey.isNullOrBlank()) {
+        useInMemoryPgpKeys(signingKey, signingPassword)
+        sign(publishing.publications["mavenJava"])
+    }
+}
+
+// Central rejects unsigned releases, and an unsigned bundle is only discovered after the upload.
+// Failing here keeps a release from getting that far, while leaving SNAPSHOT builds unsigned so
+// `check` and local work need no key at all.
+val requireSignedRelease by tasks.registering {
+    description = "Fails a release bundle that carries no signatures"
+    group = "publishing"
+
+    val isSnapshot = version.toString().endsWith("SNAPSHOT")
+    val hasKey =
+        !providers
+            .environmentVariable("SIGNING_KEY")
+            .orElse(providers.gradleProperty("signingKey"))
+            .orNull
+            .isNullOrBlank()
+
+    doLast {
+        if (!isSnapshot && !hasKey) {
+            throw GradleException(
+                "Refusing to build a release bundle without a signing key: Maven Central rejects " +
+                    "unsigned artifacts. Set SIGNING_KEY and SIGNING_PASSWORD, or build a SNAPSHOT.",
+            )
+        }
+    }
+}
+
+// The Central Portal takes a zip of the Maven layout: POST it to
+// https://central.sonatype.com/api/v1/publisher/upload with the file in a `bundle` form field.
+// maven-metadata files are excluded because the bundle describes one version, not a repository.
+// The staging directory is a plain Maven repository, so it accumulates: without wiping it first, a
+// release bundle carries whatever earlier builds left behind — unsigned SNAPSHOT artifacts included.
+val cleanStagingDeploy by tasks.registering(Delete::class) {
+    description = "Empties the staging repository so a bundle contains only this build"
+    group = "publishing"
+    delete(layout.buildDirectory.dir("staging-deploy"))
+}
+
+tasks.named("publishMavenJavaPublicationToStagingDeployRepository") {
+    dependsOn(cleanStagingDeploy)
+}
+
+val centralBundle by tasks.registering(Zip::class) {
+    description = "Builds the deployment bundle the Central Portal expects"
+    group = "publishing"
+    dependsOn(requireSignedRelease)
+    dependsOn(tasks.named("publishMavenJavaPublicationToStagingDeployRepository"))
+
+    from(layout.buildDirectory.dir("staging-deploy"))
+    exclude("**/maven-metadata*")
+    archiveFileName.set("central-bundle-$version.zip")
+    destinationDirectory.set(layout.buildDirectory.dir("central"))
+
+    doLast {
+        logger.lifecycle("Central bundle: ${archiveFile.get().asFile}")
     }
 }
