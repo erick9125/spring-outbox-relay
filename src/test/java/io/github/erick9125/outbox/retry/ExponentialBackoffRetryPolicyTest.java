@@ -66,6 +66,7 @@ class ExponentialBackoffRetryPolicyTest {
         OutboxStatus.PROCESSING,
         attempts,
         maxAttempts,
+        0,
         now,
         now,
         now,

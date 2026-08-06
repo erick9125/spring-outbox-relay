@@ -43,7 +43,9 @@ public interface OutboxRepository {
   boolean markFailed(UUID id, String lockedBy, int attempts, String lastError);
 
   /**
-   * Returns at most {@code limit} rows whose claim expired back to {@code PENDING}.
+   * Returns at most {@code limit} rows whose claim expired back to {@code PENDING}, incrementing
+   * their recovery count. Rows that have already been recovered {@code maxRecoveries} times are
+   * left for {@link #failExhaustedRecoveries}.
    *
    * <p>Bounded on purpose. After a long outage the backlog of abandoned claims can be enormous, and
    * a single unbounded UPDATE would hold locks over the whole set, bloat the table and compete with
@@ -51,7 +53,18 @@ public interface OutboxRepository {
    *
    * @return how many rows were recovered; fewer than {@code limit} means the backlog is drained
    */
-  int recoverAbandoned(Instant lockedBefore, int limit);
+  int recoverAbandoned(Instant lockedBefore, int maxRecoveries, int limit);
+
+  /**
+   * Moves abandoned claims that have used up their recovery budget to {@code FAILED}.
+   *
+   * <p>Without this an event whose processing kills the process loops forever: recovery hands it
+   * back, a worker claims it, it kills the process again. Failing it makes the loop terminate and
+   * leaves the row inspectable instead of invisible.
+   *
+   * @return how many rows were failed; fewer than {@code limit} means there are no more
+   */
+  int failExhaustedRecoveries(Instant lockedBefore, int maxRecoveries, int limit);
 
   /**
    * Deletes at most {@code limit} published rows older than {@code publishedBefore}.

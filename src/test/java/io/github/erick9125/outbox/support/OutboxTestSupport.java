@@ -56,20 +56,130 @@ public final class OutboxTestSupport {
   }
 
   public static OutboxProperties properties(int batchSize, int maxAttempts) {
-    return new OutboxProperties(
-        true,
-        batchSize,
-        Duration.ofMillis(100),
-        Duration.ofMinutes(5),
-        maxAttempts,
-        "test-instance",
-        Duration.ofSeconds(30),
-        500,
-        Duration.ofSeconds(30),
-        Duration.ofSeconds(10),
-        Duration.ofSeconds(30),
-        new OutboxProperties.Retry(Duration.ofSeconds(5), Duration.ofMinutes(5), 2.0d, 0.0d),
-        OutboxProperties.Cleanup.defaults());
+    return props().batchSize(batchSize).defaultMaxAttempts(maxAttempts).build();
+  }
+
+  /**
+   * Builder for test properties, and the only place in the test sources that calls the {@link
+   * OutboxProperties} constructor positionally. Every new property otherwise means editing every
+   * call site, which has already gone wrong more than once.
+   */
+  public static Props props() {
+    return new Props();
+  }
+
+  public static final class Props {
+    private int batchSize = 50;
+    private Duration pollInterval = Duration.ofMillis(100);
+    private Duration lockTimeout = Duration.ofMinutes(5);
+    private int defaultMaxAttempts = 5;
+    private String instanceId = "test-instance";
+    private Duration recoveryInterval = Duration.ofSeconds(30);
+    private int maintenanceBatchSize = 500;
+    private int maxRecoveries = 3;
+    private Duration publishTimeout = Duration.ofSeconds(30);
+    private Duration backlogMetricsInterval = Duration.ofSeconds(10);
+    private Duration shutdownTimeout = Duration.ofSeconds(30);
+    private OutboxProperties.Retry retry =
+        new OutboxProperties.Retry(Duration.ofSeconds(5), Duration.ofMinutes(5), 2.0d, 0.0d);
+    private OutboxProperties.Cleanup cleanup = OutboxProperties.Cleanup.defaults();
+
+    private Props() {}
+
+    public Props batchSize(int value) {
+      this.batchSize = value;
+      return this;
+    }
+
+    public Props pollInterval(Duration value) {
+      this.pollInterval = value;
+      return this;
+    }
+
+    public Props lockTimeout(Duration value) {
+      this.lockTimeout = value;
+      return this;
+    }
+
+    public Props defaultMaxAttempts(int value) {
+      this.defaultMaxAttempts = value;
+      return this;
+    }
+
+    public Props instanceId(String value) {
+      this.instanceId = value;
+      return this;
+    }
+
+    public Props recoveryInterval(Duration value) {
+      this.recoveryInterval = value;
+      return this;
+    }
+
+    public Props maintenanceBatchSize(int value) {
+      this.maintenanceBatchSize = value;
+      return this;
+    }
+
+    public Props maxRecoveries(int value) {
+      this.maxRecoveries = value;
+      return this;
+    }
+
+    public Props publishTimeout(Duration value) {
+      this.publishTimeout = value;
+      return this;
+    }
+
+    public Props backlogMetricsInterval(Duration value) {
+      this.backlogMetricsInterval = value;
+      return this;
+    }
+
+    public Props shutdownTimeout(Duration value) {
+      this.shutdownTimeout = value;
+      return this;
+    }
+
+    public Props cleanup(OutboxProperties.Cleanup value) {
+      this.cleanup = value;
+      return this;
+    }
+
+    public Props from(OutboxProperties properties) {
+      this.batchSize = properties.batchSize();
+      this.pollInterval = properties.pollInterval();
+      this.lockTimeout = properties.lockTimeout();
+      this.defaultMaxAttempts = properties.defaultMaxAttempts();
+      this.instanceId = properties.instanceId();
+      this.recoveryInterval = properties.recoveryInterval();
+      this.maintenanceBatchSize = properties.maintenanceBatchSize();
+      this.maxRecoveries = properties.maxRecoveries();
+      this.publishTimeout = properties.publishTimeout();
+      this.backlogMetricsInterval = properties.backlogMetricsInterval();
+      this.shutdownTimeout = properties.shutdownTimeout();
+      this.retry = properties.retry();
+      this.cleanup = properties.cleanup();
+      return this;
+    }
+
+    public OutboxProperties build() {
+      return new OutboxProperties(
+          true,
+          batchSize,
+          pollInterval,
+          lockTimeout,
+          defaultMaxAttempts,
+          instanceId,
+          recoveryInterval,
+          maintenanceBatchSize,
+          maxRecoveries,
+          publishTimeout,
+          backlogMetricsInterval,
+          shutdownTimeout,
+          retry,
+          cleanup);
+    }
   }
 
   public static Fixture fixture(PostgreSQLContainer<?> postgres) {
@@ -116,20 +226,11 @@ public final class OutboxTestSupport {
         new ExponentialBackoffRetryPolicy(
             Duration.ofSeconds(5), Duration.ofMinutes(5), 2.0d, 0.0d, Clock.systemUTC());
     OutboxProperties properties =
-        new OutboxProperties(
-            true,
-            fixture.properties().batchSize(),
-            fixture.properties().pollInterval(),
-            fixture.properties().lockTimeout(),
-            fixture.properties().defaultMaxAttempts(),
-            instanceId,
-            fixture.properties().recoveryInterval(),
-            fixture.properties().maintenanceBatchSize(),
-            publishTimeout,
-            fixture.properties().backlogMetricsInterval(),
-            fixture.properties().shutdownTimeout(),
-            fixture.properties().retry(),
-            fixture.properties().cleanup());
+        props()
+            .from(fixture.properties())
+            .instanceId(instanceId)
+            .publishTimeout(publishTimeout)
+            .build();
     return new DefaultOutboxRelay(
         fixture.repository(),
         brokerPublisher,

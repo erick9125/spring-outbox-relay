@@ -144,12 +144,17 @@ class OutboxMetricsTest {
     }
 
     @Override
-    public int recoverAbandoned(Instant lockedBefore, int limit) {
+    public int recoverAbandoned(Instant lockedBefore, int maxRecoveries, int limit) {
       return 0;
     }
 
     @Override
     public int deletePublishedBefore(Instant publishedBefore, int limit) {
+      return 0;
+    }
+
+    @Override
+    public int failExhaustedRecoveries(Instant lockedBefore, int maxRecoveries, int limit) {
       return 0;
     }
 
