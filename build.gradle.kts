@@ -265,14 +265,15 @@ val requireSignedRelease by tasks.registering {
     group = "publishing"
 
     val isSnapshot = version.toString().endsWith("SNAPSHOT")
-    val hasKey =
-        !providers
+    // Read at execution time. Configuration-time reads can see a Gradle daemon that started without
+    // SIGNING_KEY (for example after a prior `check` in the same CI job).
+    val signingKeyProvider =
+        providers
             .environmentVariable("SIGNING_KEY")
             .orElse(providers.gradleProperty("signingKey"))
-            .orNull
-            .isNullOrBlank()
 
     doLast {
+        val hasKey = !signingKeyProvider.orNull.isNullOrBlank()
         if (!isSnapshot && !hasKey) {
             throw GradleException(
                 "Refusing to build a release bundle without a signing key: Maven Central rejects " +

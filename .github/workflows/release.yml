@@ -13,6 +13,12 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Signing env must be on the job, not only on the bundle step. The Gradle daemon starts during
+    # `check` and keeps the environment it first saw; a later step that injects SIGNING_KEY arrives
+    # too late and `requireSignedRelease` thinks there is no key.
+    env:
+      SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+      SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
 
     steps:
       - uses: actions/checkout@v4
@@ -42,13 +48,22 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Releasing $VERSION"
 
+      - name: Verify signing secrets are present
+        run: |
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "::error::SIGNING_KEY is empty. Check the repository secret name and value."
+            exit 1
+          fi
+          if [ -z "$SIGNING_PASSWORD" ]; then
+            echo "::error::SIGNING_PASSWORD is empty. Check the repository secret name and value."
+            exit 1
+          fi
+          echo "Signing secrets are present (${#SIGNING_KEY} chars in SIGNING_KEY)"
+
       - name: Unit, integration, format, and static checks
         run: ./gradlew check -PoutboxVersion=${{ steps.version.outputs.version }}
 
       - name: Build the Central Portal bundle
-        env:
-          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
         run: ./gradlew centralBundle -PoutboxVersion=${{ steps.version.outputs.version }}
 
       - name: Check the bundle is signed
